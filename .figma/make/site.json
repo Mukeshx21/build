@@ -1,0 +1,10 @@
+{
+  "description": "Connect buyers and sellers with AI-driven property recommendations, document verification, cost estimation, interactive maps, and 3D building previews.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

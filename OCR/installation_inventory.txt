@@ -1,0 +1,69 @@
+OCR PROJECT INSTALLATION INVENTORY
+==================================
+
+Project folder:
+C:\Users\mukes\OneDrive\Desktop\OCR
+
+Python environment verified:
+- Environment type: system Python
+- Python executable:
+  C:\Users\mukes\AppData\Local\Microsoft\WindowsApps\python3.13.exe
+- Python version: 3.13.14
+- Python package installation directory:
+  C:\Users\mukes\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages
+
+Python packages required by this project
+----------------------------------------
+The following packages are declared in requirements.txt and were verified as
+installed in the Python environment above:
+
+Package                         Installed version       Declared version
+------------------------------  ----------------------  ----------------
+fastapi                         0.115.6                 0.115.6
+uvicorn                         0.34.0                  0.34.0
+python-multipart                0.0.20                  0.0.20
+pytesseract                     0.3.13                  0.3.13
+PyMuPDF                         1.25.3                  1.25.3
+opencv-python-headless          4.10.0.84               4.10.0.84
+Pillow                          11.1.0                  11.1.0
+numpy                           2.2.2                   2.2.2
+python-docx                     1.1.2                   1.1.2
+reportlab                       4.2.5                   4.2.5
+
+All ten direct project requirements currently match the pinned versions in
+requirements.txt.
+
+Project-local OCR resources
+---------------------------
+- English Tesseract language data:
+  C:\Users\mukes\OneDrive\Desktop\OCR\data\tessdata\eng.traineddata
+- Tamil Tesseract language data:
+  C:\Users\mukes\OneDrive\Desktop\OCR\data\tessdata\tam.traineddata
+- Uploaded OCR documents:
+  C:\Users\mukes\OneDrive\Desktop\OCR\data\uploads
+- SQLite database:
+  C:\Users\mukes\OneDrive\Desktop\OCR\data\landai.sqlite3
+
+External software
+-----------------
+- Tesseract OCR is installed at:
+  C:\Program Files\Tesseract-OCR\tesseract.exe
+- Installed Tesseract version: 5.4.0.20240606
+- Tesseract currently reports these system language files:
+  eng, osd
+- The project also includes Tamil language data at:
+  C:\Users\mukes\OneDrive\Desktop\OCR\data\tessdata\tam.traineddata
+- The executable is not stored in this project folder. The application checks
+  these Windows locations, in this order, when TESSERACT_CMD is not set:
+  1. The path in the TESSERACT_CMD environment variable
+  2. C:\Users\<user>\AppData\Local\Tesseract-OCR\tesseract.exe
+  3. C:\Program Files\Tesseract-OCR\tesseract.exe
+  4. C:\Program Files (x86)\Tesseract-OCR\tesseract.exe
+- A Unicode Tamil font is optional for reconstructed Tamil PDFs. The
+  LANDAI_TAMIL_FONT environment variable can specify its location.
+
+Verification command
+--------------------
+To check the current environment again:
+
+C:\Users\mukes\AppData\Local\Microsoft\WindowsApps\python3.13.exe -m pip list

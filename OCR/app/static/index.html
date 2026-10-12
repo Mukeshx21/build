@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LandAI | Land Document Digitization</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+Tamil:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --ink: #18352e;
+            --muted: #6e817b;
+            --emerald: #087f5b;
+            --mint: #e8f5ef;
+            --line: #d7e5df;
+            --paper: #fbfdfc;
+            --amber: #9b5d18;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            color: var(--ink);
+            background: var(--paper);
+            font-family: "DM Sans", sans-serif;
+        }
+
+        .shell {
+            max-width: 1240px;
+            margin: 0 auto;
+            padding: 28px 28px 64px;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 48px;
+        }
+
+        .brand {
+            font-weight: 700;
+            letter-spacing: -.03em;
+            font-size: 22px;
+        }
+
+        .brand span {
+            color: var(--emerald);
+        }
+
+        .eyebrow {
+            color: var(--emerald);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .14em;
+        }
+
+        h1 {
+            font-size: clamp(32px, 5vw, 58px);
+            letter-spacing: -.055em;
+            line-height: 1;
+            max-width: 720px;
+            margin: 12px 0 18px;
+        }
+
+        .intro {
+            color: var(--muted);
+            max-width: 600px;
+            font-size: 17px;
+            line-height: 1.6;
+            margin-bottom: 32px;
+        }
+
+        .workspace {
+            display: grid;
+            grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr);
+            gap: 22px;
+            align-items: start;
+        }
+
+        .panel {
+            border: 1px solid var(--line);
+            background: #fff;
+            border-radius: 8px;
+            padding: 24px;
+            box-shadow: 0 12px 34px rgba(16, 66, 49, .05);
+        }
+
+        .drop {
+            min-height: 300px;
+            border: 1.5px dashed #9bc6b6;
+            background: linear-gradient(140deg, #f4fbf7, #fff);
+            display: grid;
+            place-items: center;
+            text-align: center;
+            padding: 28px;
+            cursor: pointer;
+            transition: .2s;
+        }
+
+        .drop.drag {
+            border-color: var(--emerald);
+            background: var(--mint);
+        }
+
+        .drop strong {
+            display: block;
+            font-size: 18px;
+            margin: 12px 0 7px;
+        }
+
+        .drop p {
+            color: var(--muted);
+            margin: 0;
+            font-size: 14px;
+        }
+
+        input[type=file] {
+            display: none;
+        }
+
+        .upload-icon {
+            width: 48px;
+            height: 48px;
+            display: grid;
+            place-items: center;
+            color: var(--emerald);
+            background: var(--mint);
+            border-radius: 50%;
+            font-size: 24px;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            font-size: 13px;
+            margin: 22px 0 8px;
+        }
+
+        select,
+        textarea {
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 5px;
+            padding: 12px;
+            color: var(--ink);
+            font: inherit;
+            background: #fff;
+        }
+
+        button {
+            border: 0;
+            border-radius: 5px;
+            padding: 12px 16px;
+            font: 600 14px inherit;
+            cursor: pointer;
+        }
+
+        .primary {
+            background: var(--emerald);
+            color: #fff;
+        }
+
+        .quiet {
+            background: var(--mint);
+            color: var(--ink);
+        }
+
+        button:disabled {
+            opacity: .45;
+            cursor: not-allowed;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 18px;
+        }
+
+        .file-meta {
+            margin-top: 14px;
+            padding: 12px;
+            background: #f7faf8;
+            border-radius: 5px;
+            display: none;
+            font-size: 13px;
+        }
+
+        .file-meta.visible {
+            display: block;
+        }
+
+        .stepper {
+            display: flex;
+            gap: 0;
+            margin: 22px 0;
+            overflow: auto;
+        }
+
+        .step {
+            min-width: 105px;
+            color: #a2b2ad;
+            font-size: 11px;
+            font-weight: 600;
+            text-align: center;
+            position: relative;
+        }
+
+        .step:before {
+            content: "";
+            display: block;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            border: 2px solid #cedbd6;
+            margin: 0 auto 7px;
+            background: #fff;
+        }
+
+        .step:not(:last-child):after {
+            content: "";
+            position: absolute;
+            height: 2px;
+            background: #dce8e3;
+            left: calc(50% + 13px);
+            right: calc(-50% + 13px);
+            top: 10px;
+        }
+
+        .step.active {
+            color: var(--emerald);
+        }
+
+        .step.active:before {
+            background: var(--emerald);
+            border-color: var(--emerald);
+            box-shadow: inset 0 0 0 5px #fff;
+        }
+
+        .status {
+            min-height: 24px;
+            color: var(--muted);
+            font-size: 13px;
+            margin-top: 12px;
+        }
+
+        .error {
+            color: #a44335;
+        }
+
+        .success {
+            color: var(--emerald);
+        }
+
+        .results {
+            display: none;
+            margin-top: 22px;
+        }
+
+        .results.visible {
+            display: block;
+        }
+
+        .result-top {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+
+        h2 {
+            font-size: 21px;
+            margin: 0;
+            letter-spacing: -.03em;
+        }
+
+        h3 {
+            font-size: 14px;
+            margin: 0 0 10px;
+        }
+
+        .result-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+        }
+
+        .result-box {
+            border: 1px solid var(--line);
+            border-radius: 5px;
+            padding: 14px;
+            min-width: 0;
+        }
+
+        .result-box small {
+            display: block;
+            color: var(--muted);
+            margin-bottom: 10px;
+        }
+
+        .source-preview {
+            width: 100%;
+            min-height: 340px;
+            border: 1px solid var(--line);
+            border-radius: 5px;
+            background: #f7faf8;
+            object-fit: contain;
+        }
+
+        textarea {
+            min-height: 340px;
+            resize: vertical;
+            font-family: "Noto Sans Tamil", "DM Sans", sans-serif;
+            line-height: 1.65;
+        }
+
+        .page-tabs {
+            display: flex;
+            gap: 7px;
+            overflow: auto;
+            margin-bottom: 10px;
+        }
+
+        .tab {
+            padding: 7px 10px;
+            background: #f0f6f3;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .tab.selected {
+            background: var(--emerald);
+            color: #fff;
+        }
+
+        .fields {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 14px;
+        }
+
+        .field {
+            background: #f7faf8;
+            padding: 10px;
+            font-size: 12px;
+        }
+
+        .field b {
+            display: block;
+            font-size: 11px;
+            color: var(--muted);
+            margin-bottom: 3px;
+        }
+
+        .review {
+            color: var(--amber);
+        }
+
+        @media (max-width:800px) {
+            .shell {
+                padding: 20px 16px 44px
+            }
+
+            header {
+                margin-bottom: 34px
+            }
+
+            .workspace,
+            .result-grid {
+                grid-template-columns: 1fr
+            }
+
+            .panel {
+                padding: 18px
+            }
+
+            .drop {
+                min-height: 230px
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <main class="shell">
+        <header>
+            <div class="brand">Land<span>AI</span></div>
+            <div class="eyebrow">Document intelligence</div>
+        </header>
+        <section>
+            <h1>Extract text from land documents.</h1>
+            <p class="intro">Upload a land document to recognize Tamil and English text, view the original document
+                beside the extracted text, correct the transcription, and export the result as TXT, DOCX, or PDF.</p>
+        </section>
+        <div class="workspace">
+            <section class="panel">
+                <div id="drop" class="drop">
+                    <div>
+                        <div class="upload-icon">↑</div><strong>Drop a land document here</strong>
+                        <p>PDF, JPG, JPEG, or PNG up to 50 MB</p><button id="browse" class="quiet" type="button"
+                            style="margin-top:18px">Browse files</button>
+                    </div><input id="file" type="file" accept=".pdf,.jpg,.jpeg,.png">
+                </div>
+                <div id="fileMeta" class="file-meta"></div>
+                <div id="preview" style="display:none;margin-top:14px"></div>
+                <label for="language">Document language</label><select id="language">
+                    <option value="ta-en" selected>Tamil + English</option>
+                    <option value="ta">Tamil</option>
+                    <option value="en">English</option>
+                    <option value="auto">Automatic language selection</option>
+                </select>
+                <div class="actions"><button id="process" class="primary" disabled>Upload and process</button><button
+                        id="remove" class="quiet" disabled>Remove</button></div>
+                <div id="status" class="status"></div>
+            </section>
+            <section class="panel">
+                <div id="empty">
+                    <h2>Results will appear here</h2>
+                    <p class="intro" style="font-size:14px;margin:10px 0 0">Upload a document to view the source image
+                        and its extracted text.</p>
+                </div>
+                <div id="results" class="results">
+                    <div class="result-top">
+                        <div>
+                            <h2 id="resultTitle"></h2>
+                            <div id="resultMeta" class="status"></div>
+                        </div>
+                        <div class="actions" style="margin:0"><button class="quiet export"
+                                data-kind="txt">TXT</button><button class="quiet export"
+                                data-kind="docx">DOCX</button><button class="primary export" data-kind="pdf">Digital
+                                PDF</button></div>
+                    </div>
+                    <div class="page-tabs" id="tabs"></div>
+                    <div class="result-grid">
+                        <div class="result-box"><small>Source document</small><div id="sourcePreview"></div></div>
+                        <div class="result-box"><small>OCR extracted text · editable</small><textarea
+                                id="text"></textarea><button id="save" class="primary" style="margin-top:10px">Save
+                                corrections</button></div>
+                        <div class="result-box"><small>Land information detected</small>
+                            <div id="fields" class="fields"></div>
+                            <div class="status">Fields are extracted without translation. Values marked “Needs review”
+                                were not confidently found.</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+    <script>
+        const $ = (id) => document.getElementById(id); let chosen = null, documentId = null, data = null, currentPage = 0;
+        const setStatus = (message, type = '') => { $('status').textContent = message; $('status').className = `status ${type}`; };
+        const selectFile = (file) => { chosen = file; $('fileMeta').textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`; $('fileMeta').classList.add('visible'); const url = URL.createObjectURL(file); $('preview').style.display = 'block'; $('preview').innerHTML = file.type === 'application/pdf' ? `<embed src="${url}" type="application/pdf" width="100%" height="180" style="border:1px solid var(--line);border-radius:5px">` : `<img src="${url}" alt="Selected document preview" style="max-width:100%;max-height:180px;display:block;margin:auto;border:1px solid var(--line);border-radius:5px">`; $('process').disabled = false; $('remove').disabled = false; setStatus('Ready to upload.'); };
+        $('browse').onclick = () => $('file').click(); $('drop').onclick = (event) => { if (event.target.id !== 'browse') $('file').click(); }; $('file').onchange = (e) => e.target.files[0] && selectFile(e.target.files[0]);
+        ['dragenter', 'dragover'].forEach(name => $('drop').addEventListener(name, e => { e.preventDefault(); $('drop').classList.add('drag') }));['dragleave', 'drop'].forEach(name => $('drop').addEventListener(name, e => { e.preventDefault(); $('drop').classList.remove('drag') })); $('drop').ondrop = (e) => e.dataTransfer.files[0] && selectFile(e.dataTransfer.files[0]);
+        $('remove').onclick = () => { chosen = null; $('file').value = ''; $('fileMeta').classList.remove('visible'); $('preview').style.display = 'none'; $('preview').innerHTML = ''; $('process').disabled = true; $('remove').disabled = true; setStatus(''); };
+        const API_BASE = window.location.port === '8000' ? '' : 'http://127.0.0.1:8000';
+        const apiUrl = (path) => `${API_BASE}${path}`;
+        const requestError = (error) => error instanceof TypeError && error.message === 'Failed to fetch'
+            ? 'Could not connect to the OCR service. Start FastAPI with: python -m uvicorn app.main:app --reload'
+            : error instanceof Error ? error.message : 'The request failed.';
+        const responsePayload = async (response) => { const body = await response.text(); if (!body) return {}; try { return JSON.parse(body); } catch { return { detail: body }; } };
+        const responseData = async (response) => { const payload = await responsePayload(response); if (!response.ok) throw new Error(payload.detail || `Request failed (${response.status})`); return payload; };
+        $('process').onclick = async () => { if (!chosen) return; $('process').disabled = true; setStatus('Uploading…'); try { const form = new FormData(); form.append('file', chosen); form.append('language', $('language').value); let response = await fetch(apiUrl('/api/ocr/upload'), { method: 'POST', body: form }); const uploaded = await responseData(response); documentId = uploaded.document_id; setStatus('Preprocessing and recognizing every page…'); response = await fetch(apiUrl('/api/ocr/process'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ document_id: documentId }) }); data = await responseData(response); render(); setStatus('OCR complete. Review the transcription before exporting.', 'success'); } catch (error) { setStatus(requestError(error), 'error'); $('process').disabled = false; } };
+        function render() { $('empty').style.display = 'none'; $('results').classList.add('visible'); $('resultTitle').textContent = data.original_name; $('resultMeta').textContent = `${data.page_count} page${data.page_count === 1 ? '' : 's'} · ${data.status}`; $('tabs').innerHTML = ''; data.pages.forEach((page, index) => { const tab = document.createElement('button'); tab.className = `tab ${index === currentPage ? 'selected' : ''}`; tab.textContent = `Page ${page.page_number}`; tab.onclick = () => { currentPage = index; render() }; $('tabs').appendChild(tab) }); const page = data.pages[currentPage]; $('text').value = page.text; $('fields').innerHTML = Object.entries(data.fields).map(([key, item]) => `<div class="field"><b>${key.replaceAll('_', ' ')}</b><span class="${item.status === 'needs_review' ? 'review' : ''}">${item.value || 'Needs review'}</span></div>`).join(''); const source = apiUrl(data.original_url); $('sourcePreview').innerHTML = data.content_type === 'application/pdf' ? `<embed class="source-preview" src="${source}" type="application/pdf">` : `<img class="source-preview" src="${source}" alt="Uploaded document">`; }
+        $('save').onclick = async () => { data.pages[currentPage].text = $('text').value; const pages = {}; data.pages.forEach(p => pages[p.page_number] = p.text); try { const response = await fetch(apiUrl(`/api/ocr/document/${documentId}/corrections`), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pages }) }); data = await responseData(response); setStatus('Corrections saved.', 'success'); render(); } catch (error) { setStatus(requestError(error), 'error'); } };
+        document.querySelectorAll('.export').forEach(button => button.onclick = () => { if (documentId) window.location = apiUrl(`/api/ocr/document/${documentId}/export/${button.dataset.kind}`); });
+    </script>
+</body>
+
+</html>

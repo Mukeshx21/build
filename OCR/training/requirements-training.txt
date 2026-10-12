@@ -1,0 +1,3 @@
+# Dataset preparation uses only the Python standard library.
+# Evaluation uses the existing application dependencies:
+-r ..\requirements.txt

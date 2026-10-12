@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["image", "text", "language", "document_type", "source_id"],
+  "properties": {
+    "image": {"type": "string", "minLength": 1},
+    "text": {"type": "string", "minLength": 1},
+    "language": {"enum": ["ta", "en", "mixed"]},
+    "document_type": {
+      "enum": [
+        "patta", "chitta", "sale_deed", "registration", "survey",
+        "ownership", "boundary", "measurement", "government_extract"
+      ]
+    },
+    "source_id": {"type": "string", "minLength": 1},
+    "split": {"enum": ["train", "validation", "test"]}
+  },
+  "additionalProperties": false
+}
