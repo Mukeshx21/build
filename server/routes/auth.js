@@ -1,204 +1,260 @@
 import { Router } from "express";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import db from "../db.js";
-import { authenticate, getJwtSecret } from "../middleware/auth.js";
+import {
+  authenticate,
+  requireFirebaseConfigured,
+} from "../middleware/auth.js";
+import { getFirebaseAdminStatus, verifyIdToken } from "../firebase.js";
 
 const router = Router();
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ALLOWED_ROLES = new Set(["buyer", "seller"]);
 
-// 1. REGISTER NEW USER (Direct registration & instant login)
-router.post("/register", async (req, res) => {
+router.get("/status", (_req, res) => {
+  const status = getFirebaseAdminStatus();
+  res.json({
+    configured: status.configured,
+    message: status.configured
+      ? "Firebase Admin is ready."
+      : status.error,
+  });
+});
+
+/**
+ * Register / sync profile after Firebase client Auth succeeds.
+ * Role is accepted ONLY when creating a brand-new profile.
+ * Existing profiles never accept a client-supplied role override.
+ */
+router.post("/register", requireFirebaseConfigured, async (req, res) => {
   try {
-    const { name, email, password, confirmPassword, role, agreeTerms } = req.body;
+    const { idToken, name, role, agreeTerms } = req.body || {};
 
-    // Validation
+    if (!idToken || typeof idToken !== "string") {
+      return res.status(400).json({ error: "Firebase ID token is required." });
+    }
     if (!name || typeof name !== "string" || name.trim().length < 2) {
-      return res.status(400).json({ error: "Please enter your full name (minimum 2 characters)." });
+      return res.status(400).json({
+        error: "Please enter your full name (minimum 2 characters).",
+      });
     }
-
-    if (!email || !EMAIL_REGEX.test(email.trim())) {
-      return res.status(400).json({ error: "Please provide a valid email address." });
-    }
-
-    if (!password || password.length < 6) {
-      return res.status(400).json({ error: "Password must be at least 6 characters long." });
-    }
-
-    if (password !== confirmPassword) {
-      return res.status(400).json({ error: "Passwords do not match. Please verify both entries." });
-    }
-
-    const cleanRole = (role || "").toLowerCase();
-    if (cleanRole !== "buyer" && cleanRole !== "seller") {
-      return res.status(400).json({ error: "Please select an account type: Buyer or Seller." });
-    }
-
     if (!agreeTerms) {
-      return res.status(400).json({ error: "You must accept the Terms and Conditions to proceed." });
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-
-    // Check if account already exists
-    const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(normalizedEmail);
-    if (existing) {
-      return res.status(409).json({
-        error: "An account with this email address already exists. Please sign in."
+      return res.status(400).json({
+        error: "You must accept the Terms and Conditions to proceed.",
       });
     }
 
-    // Hash password
-    const salt = bcrypt.genSaltSync(10);
-    const passwordHash = bcrypt.hashSync(password, salt);
+    const cleanRole = String(role || "").toLowerCase();
+    if (!ALLOWED_ROLES.has(cleanRole)) {
+      return res.status(400).json({
+        error: "Please select an account type: Buyer or Seller.",
+      });
+    }
 
-    // Insert user with full access
+    const decoded = await verifyIdToken(idToken);
+    if (!decoded.email || !EMAIL_REGEX.test(decoded.email)) {
+      return res.status(400).json({
+        error: "Firebase account is missing a valid email address.",
+      });
+    }
+
+    const email = decoded.email.trim().toLowerCase();
+    const existingByUid = db
+      .prepare("SELECT * FROM users WHERE firebase_uid = ?")
+      .get(decoded.uid);
+    const existingByEmail = db
+      .prepare("SELECT * FROM users WHERE email = ? COLLATE NOCASE")
+      .get(email);
+
+    if (existingByUid || existingByEmail) {
+      return res.status(409).json({
+        error: "An account with this email already exists. Please sign in.",
+      });
+    }
+
     const insert = db.prepare(`
-      INSERT INTO users (name, email, password_hash, role, is_verified)
-      VALUES (?, ?, ?, ?, 1)
+      INSERT INTO users (firebase_uid, name, email, role, is_verified, password_hash)
+      VALUES (?, ?, ?, ?, ?, NULL)
     `);
-    const result = insert.run(name.trim(), normalizedEmail, passwordHash, cleanRole);
+    const result = insert.run(
+      decoded.uid,
+      name.trim(),
+      email,
+      cleanRole,
+      decoded.email_verified ? 1 : 0,
+    );
 
-    const safeUser = {
+    const user = {
       id: Number(result.lastInsertRowid),
+      firebase_uid: decoded.uid,
       name: name.trim(),
-      email: normalizedEmail,
-      role: cleanRole
+      email,
+      role: cleanRole,
+      is_verified: Boolean(decoded.email_verified),
+      email_verified: Boolean(decoded.email_verified),
+      phone: "",
+      preferences: {},
     };
-
-    // Sign session token
-    const token = jwt.sign(safeUser, getJwtSecret(), { expiresIn: "30d" });
-
-    res.cookie("landai_token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 30 * 24 * 60 * 60 * 1000
-    });
 
     return res.status(201).json({
       success: true,
-      message: "Account created successfully! Welcome to LandAI.",
-      user: safeUser,
-      token
+      message: decoded.email_verified
+        ? "Account created successfully."
+        : "Account created. Please verify your email before full access.",
+      user,
+      requiresEmailVerification: !decoded.email_verified,
     });
   } catch (err) {
-    console.error("Registration error:", err);
-    return res.status(500).json({ error: "An unexpected error occurred during registration. Please try again." });
+    if (err?.code === "FIREBASE_NOT_CONFIGURED") {
+      return res.status(503).json({
+        error: "Firebase Authentication is not configured on the server.",
+        configured: false,
+      });
+    }
+    console.error("Registration error:", err?.code || err?.message || err);
+    return res.status(401).json({
+      error: "Could not verify Firebase credentials. Please try again.",
+    });
   }
 });
 
-// 2. LOGIN USER (Direct authentication)
-router.post("/login", async (req, res) => {
+/**
+ * Exchange a Firebase ID token for the LandAI profile.
+ * Does not accept role from the client.
+ */
+router.post("/session", requireFirebaseConfigured, async (req, res) => {
   try {
-    const { email, password, rememberMe } = req.body;
-
-    if (!email || !EMAIL_REGEX.test((email || "").trim())) {
-      return res.status(400).json({ error: "Please provide a valid email address." });
+    const { idToken } = req.body || {};
+    if (!idToken || typeof idToken !== "string") {
+      return res.status(400).json({ error: "Firebase ID token is required." });
     }
 
-    if (!password) {
-      return res.status(400).json({ error: "Password is required." });
-    }
+    const decoded = await verifyIdToken(idToken);
+    let user = db
+      .prepare("SELECT * FROM users WHERE firebase_uid = ?")
+      .get(decoded.uid);
 
-    const normalizedEmail = email.trim().toLowerCase();
-    const user = db.prepare("SELECT * FROM users WHERE email = ?").get(normalizedEmail);
+    if (!user && decoded.email) {
+      user = db
+        .prepare("SELECT * FROM users WHERE email = ? COLLATE NOCASE")
+        .get(decoded.email);
+      if (user) {
+        db.prepare(
+          "UPDATE users SET firebase_uid = ?, is_verified = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ).run(decoded.uid, decoded.email_verified ? 1 : 0, user.id);
+        user.firebase_uid = decoded.uid;
+      }
+    }
 
     if (!user) {
-      return res.status(401).json({ error: "Invalid email or password. Please verify your credentials." });
+      return res.status(404).json({
+        error: "No LandAI profile found. Please complete registration.",
+        code: "PROFILE_MISSING",
+      });
     }
 
-    // Verify hashed password
-    const isMatch = bcrypt.compareSync(password, user.password_hash);
-    if (!isMatch) {
-      return res.status(401).json({ error: "Invalid email or password. Please verify your credentials." });
-    }
-
-    const safeUser = {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role
-    };
-
-    const maxAge = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-    const token = jwt.sign(safeUser, getJwtSecret(), { expiresIn: rememberMe ? "30d" : "1d" });
-
-    res.cookie("landai_token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge
-    });
+    db.prepare(
+      "UPDATE users SET is_verified = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    ).run(decoded.email_verified ? 1 : 0, user.id);
 
     return res.json({
       success: true,
-      message: "Logged in successfully.",
-      user: safeUser,
-      token
+      user: {
+        id: user.id,
+        firebase_uid: decoded.uid,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        is_verified: Boolean(decoded.email_verified),
+        email_verified: Boolean(decoded.email_verified),
+        phone: user.phone || "",
+        preferences: safeParse(user.preferences_json, {}),
+        created_at: user.created_at,
+      },
+      requiresEmailVerification: !decoded.email_verified,
     });
   } catch (err) {
-    console.error("Login error:", err);
-    return res.status(500).json({ error: "An unexpected error occurred during login." });
+    if (err?.code === "FIREBASE_NOT_CONFIGURED") {
+      return res.status(503).json({
+        error: "Firebase Authentication is not configured on the server.",
+        configured: false,
+      });
+    }
+    return res.status(401).json({
+      error: "Invalid or expired Firebase session.",
+    });
   }
 });
 
-// 3. GET CURRENT USER PROFILE
 router.get("/me", authenticate, (req, res) => {
-  return res.json({
-    user: req.user
-  });
+  return res.json({ user: req.user });
 });
 
-// 4. LOGOUT
-router.post("/logout", (req, res) => {
-  res.clearCookie("landai_token", {
-    httpOnly: true,
-    sameSite: "lax"
-  });
-  return res.json({
-    success: true,
-    message: "Logged out successfully."
-  });
-});
-
-// 5. DIRECT PASSWORD RESET (No email codes needed)
-router.post("/reset-password", (req, res) => {
+router.patch("/me", authenticate, (req, res) => {
   try {
-    const { email, newPassword, confirmPassword } = req.body;
+    const { name, phone, preferences } = req.body || {};
+    const updates = [];
+    const values = [];
 
-    if (!email || !EMAIL_REGEX.test(email.trim())) {
-      return res.status(400).json({ error: "Please enter a valid email address." });
+    if (typeof name === "string" && name.trim().length >= 2) {
+      updates.push("name = ?");
+      values.push(name.trim());
+    }
+    if (typeof phone === "string") {
+      updates.push("phone = ?");
+      values.push(phone.trim().slice(0, 32));
+    }
+    if (preferences && typeof preferences === "object") {
+      updates.push("preferences_json = ?");
+      values.push(JSON.stringify(preferences));
     }
 
-    if (!newPassword || newPassword.length < 6) {
-      return res.status(400).json({ error: "New password must be at least 6 characters." });
+    if (!updates.length) {
+      return res.status(400).json({ error: "No valid profile fields to update." });
     }
 
-    if (newPassword !== confirmPassword) {
-      return res.status(400).json({ error: "Passwords do not match." });
-    }
+    updates.push("updated_at = CURRENT_TIMESTAMP");
+    values.push(req.user.id);
+    db.prepare(`UPDATE users SET ${updates.join(", ")} WHERE id = ?`).run(...values);
 
-    const normalizedEmail = email.trim().toLowerCase();
-    const user = db.prepare("SELECT id FROM users WHERE email = ?").get(normalizedEmail);
-
-    if (!user) {
-      return res.status(404).json({ error: "No account found with this email address." });
-    }
-
-    const salt = bcrypt.genSaltSync(10);
-    const newHash = bcrypt.hashSync(newPassword, salt);
-
-    db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(newHash, user.id);
+    const user = db
+      .prepare(
+        `SELECT id, firebase_uid, name, email, role, is_verified, phone, preferences_json, created_at, updated_at
+         FROM users WHERE id = ?`,
+      )
+      .get(req.user.id);
 
     return res.json({
       success: true,
-      message: "Password reset successful! You may now sign in with your new password."
+      user: {
+        id: user.id,
+        firebase_uid: user.firebase_uid,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        is_verified: Boolean(user.is_verified),
+        email_verified: req.user.email_verified,
+        phone: user.phone || "",
+        preferences: safeParse(user.preferences_json, {}),
+        created_at: user.created_at,
+        updated_at: user.updated_at,
+      },
     });
   } catch (err) {
-    console.error("Reset password error:", err);
-    return res.status(500).json({ error: "Could not reset password. Please try again." });
+    console.error("Profile update error:", err);
+    return res.status(500).json({ error: "Could not update profile." });
   }
 });
+
+router.post("/logout", (_req, res) => {
+  return res.json({ success: true, message: "Signed out on the client." });
+});
+
+function safeParse(value, fallback) {
+  try {
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export default router;

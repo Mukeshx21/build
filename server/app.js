@@ -3,34 +3,57 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import authRouter from "./routes/auth.js";
 import propertyRouter from "./routes/properties.js";
+import documentsRouter from "./routes/documents.js";
+import { getFirebaseAdminStatus } from "./firebase.js";
 
 const app = express();
 
-// Middlewares
-app.use(cors({
-  origin: true,
-  credentials: true
-}));
+function resolveAllowedOrigins() {
+  const raw = process.env.CORS_ORIGINS || "";
+  const list = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (list.length) return list;
+  if (process.env.NODE_ENV === "production") {
+    return [];
+  }
+  return true; // reflect request origin in development
+}
+
+const corsOrigin = resolveAllowedOrigins();
+
+app.use(
+  cors({
+    origin: corsOrigin.length === 0 && process.env.NODE_ENV === "production"
+      ? false
+      : corsOrigin,
+    credentials: true,
+  }),
+);
 app.use(cookieParser());
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// Health check
-app.get("/api/health", (req, res) => {
+app.get("/api/health", (_req, res) => {
+  const firebase = getFirebaseAdminStatus();
   res.json({
     status: "ok",
-    service: "LandAI Authentication & Property Engine",
-    timestamp: new Date().toISOString()
+    service: "LandAI API",
+    timestamp: new Date().toISOString(),
+    firebase_admin: firebase.configured,
+    firebase_message: firebase.configured
+      ? "ready"
+      : firebase.error,
   });
 });
 
-// Mount Routes
 app.use("/api/auth", authRouter);
+app.use("/api/documents", documentsRouter);
 app.use("/api", propertyRouter);
 
-// Global Error Handler
-app.use((err, req, res, next) => {
-  console.error("Internal Server Error:", err);
+app.use((err, _req, res, _next) => {
+  console.error("Internal Server Error:", err?.message || err);
   res.status(500).json({ error: "Internal server error" });
 });
 

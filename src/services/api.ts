@@ -1,4 +1,5 @@
-import { AuthResponse, Inquiry, User } from "../types/auth"
+import { AuthResponse, Inquiry, User, UserPreferences } from "../types/auth"
+import { getFirebaseAuth } from "../lib/firebase"
 
 export interface Property {
   id: number
@@ -13,6 +14,11 @@ export interface Property {
   tags: string[]
   seller_id?: number
   status?: string
+  description?: string
+  sample_label?: string
+  is_sample?: boolean
+  saved?: boolean
+  recommendation_reasons?: string[]
 }
 
 export interface OcrPage {
@@ -24,22 +30,56 @@ export interface OcrPage {
   warnings: string[]
 }
 
+export interface OcrField {
+  value: string | null
+  status: string
+  source?: string
+}
+
 export interface OcrDocument {
   document_id: string
+  local_id?: number
   original_name: string
   status: string
   page_count: number
   model_version?: string
   engine?: string
   pages: OcrPage[]
-  fields?: Record<string, { value: string | null; status: string }>;
+  fields?: Record<string, OcrField>
+  warning?: string
+}
+
+export interface ValidationResult {
+  validation_id?: number
+  local_id?: number
+  document_id?: string
+  original_name?: string
+  overall_status: string
+  checks: Array<{
+    id: string
+    category: string
+    severity: string
+    title: string
+    detail: string
+    evidence?: unknown
+  }>
+  disclaimer: string
+  summary?: {
+    total: number
+    pass: number
+    warning: number
+    fail: number
+    info: number
+  }
+  official_verification_performed: boolean
+  state_rules?: string
 }
 
 export class ApiError extends Error {
   status: number
-  data: any
+  data: unknown
 
-  constructor(message: string, status = 0, data: any = null) {
+  constructor(message: string, status = 0, data: unknown = null) {
     super(message)
     this.name = "ApiError"
     this.status = status
@@ -47,28 +87,13 @@ export class ApiError extends Error {
   }
 }
 
-// Configurable API URLs via environment variables with intelligent fallbacks
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(
-  /\/+$/,
-  "",
-)
-const OCR_BASE_URL = (import.meta.env.VITE_OCR_API_URL || "").replace(
-  /\/+$/,
-  "",
-)
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "")
 
-/**
- * Normalizes error messages so the user gets actionable explanations rather
- * than raw technical exceptions or generic "Failed to fetch" text.
- */
 export function formatErrorMessage(
   err: unknown,
   fallbackMessage = "An unexpected error occurred.",
 ): string {
-  if (err instanceof ApiError) {
-    return err.message
-  }
-
+  if (err instanceof ApiError) return err.message
   if (err instanceof Error) {
     const msg = err.message.toLowerCase()
     if (
@@ -76,51 +101,52 @@ export function formatErrorMessage(
       msg.includes("networkerror") ||
       msg.includes("network request failed")
     ) {
-      return "Unable to connect to the backend server. Please verify the application backend is running."
+      return "Unable to connect to the backend server. Please verify the LandAI API is running."
     }
     if (msg.includes("abort") || msg.includes("timeout")) {
       return "The request timed out. The server took too long to process your request."
     }
     return err.message
   }
-
   return fallbackMessage
 }
 
-/**
- * Centralized HTTP request utility with token injection, timeout handling, and
- * consistent error formatting.
- */
-async function apiRequest<T = any>(
+async function getIdToken(forceRefresh = false): Promise<string | null> {
+  const auth = getFirebaseAuth()
+  if (!auth?.currentUser) return null
+  try {
+    return await auth.currentUser.getIdToken(forceRefresh)
+  } catch {
+    return null
+  }
+}
+
+async function apiRequest<T = unknown>(
   endpoint: string,
-  options: RequestInit & { timeoutMs?: number; isOcr?: boolean } = {},
+  options: RequestInit & { timeoutMs?: number; skipAuth?: boolean } = {},
 ): Promise<T> {
   const {
     timeoutMs = 25000,
-    isOcr = false,
+    skipAuth = false,
     headers: customHeaders,
     ...fetchOptions
   } = options
 
-  // Determine correct base URL
   let fullUrl: string
   if (endpoint.startsWith("http://") || endpoint.startsWith("https://")) {
     fullUrl = endpoint
   } else {
-    const base = isOcr ? OCR_BASE_URL : API_BASE_URL
-    fullUrl = `${base}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`
+    fullUrl = `${API_BASE_URL}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`
   }
 
-  // Setup headers
   const headers = new Headers(customHeaders)
-
-  // Auto-inject JWT token if available
-  const token = localStorage.getItem("landai_token")
-  if (token && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${token}`)
+  if (!skipAuth) {
+    const token = await getIdToken()
+    if (token && !headers.has("Authorization")) {
+      headers.set("Authorization", `Bearer ${token}`)
+    }
   }
 
-  // Auto-set JSON content-type unless sending FormData
   if (
     !(fetchOptions.body instanceof FormData) &&
     !headers.has("Content-Type") &&
@@ -129,7 +155,6 @@ async function apiRequest<T = any>(
     headers.set("Content-Type", "application/json")
   }
 
-  // Setup timeout with AbortController
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
@@ -140,30 +165,26 @@ async function apiRequest<T = any>(
       credentials: "include",
       signal: controller.signal,
     })
-
     clearTimeout(timeoutId)
 
-    // Parse JSON or text safely
-    let responseData: any = null
+    let responseData: unknown = null
     const contentType = response.headers.get("content-type") || ""
     if (contentType.includes("application/json")) {
-      try {
-        responseData = await response.json()
-      } catch {
-        responseData = null
-      }
+      responseData = await response.json().catch(() => null)
     } else {
       responseData = await response.text().catch(() => null)
     }
 
     if (!response.ok) {
+      const dataObj =
+        responseData && typeof responseData === "object"
+          ? (responseData as Record<string, unknown>)
+          : null
       let errorMsg = `Server error (HTTP ${response.status})`
-      if (responseData && typeof responseData === "object") {
-        errorMsg =
-          responseData.error ||
-          responseData.detail ||
-          responseData.message ||
-          errorMsg
+      if (dataObj) {
+        errorMsg = String(
+          dataObj.error || dataObj.detail || dataObj.message || errorMsg,
+        )
       } else if (
         typeof responseData === "string" &&
         responseData.length < 200
@@ -172,17 +193,11 @@ async function apiRequest<T = any>(
       }
 
       if (response.status === 401) {
-        // Clear expired or invalidated session token
-        localStorage.removeItem("landai_token")
         errorMsg = "Your session has expired. Please sign in again."
       } else if (response.status === 403) {
-        errorMsg = "You do not have permission to perform this action."
-      } else if (response.status === 404) {
-        errorMsg = "The requested resource could not be found."
-      } else if (response.status >= 500) {
         errorMsg =
-          responseData?.error ||
-          "The server encountered an error processing your request."
+          String(dataObj?.error || "") ||
+          "You do not have permission to perform this action."
       }
 
       throw new ApiError(errorMsg, response.status, responseData)
@@ -191,91 +206,85 @@ async function apiRequest<T = any>(
     return responseData as T
   } catch (err: unknown) {
     clearTimeout(timeoutId)
-
-    if (err instanceof ApiError) {
-      throw err
-    }
-
+    if (err instanceof ApiError) throw err
     if (err instanceof Error && err.name === "AbortError") {
       throw new ApiError(
         `Request timed out after ${timeoutMs / 1000} seconds. Please try again.`,
         408,
       )
     }
-
-    const readableMessage = formatErrorMessage(err)
-    throw new ApiError(readableMessage, 0, err)
+    throw new ApiError(formatErrorMessage(err), 0, err)
   }
 }
 
-// ----------------------------------------------------------------------
-// Centralized API Domain Services
-// ----------------------------------------------------------------------
-
 export const api = {
-  // Authentication & Session
   auth: {
-    async getMe(): Promise<{ user: User | null }> {
-      return apiRequest<{ user: User }>("/api/auth/me", { method: "GET" })
-    },
-
-    async login(credentials: {
-      email: string
-      password: string
-      rememberMe?: boolean
-    }): Promise<AuthResponse> {
-      const res = await apiRequest<AuthResponse>("/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify(credentials),
-      })
-      if (res.token) {
-        localStorage.setItem("landai_token", res.token)
-      }
-      return res
+    async status(): Promise<{ configured: boolean; message: string }> {
+      return apiRequest("/api/auth/status", { method: "GET", skipAuth: true })
     },
 
     async register(data: {
+      idToken: string
       name: string
-      email: string
-      password: string
-      confirmPassword: string
       role: string
       agreeTerms: boolean
     }): Promise<AuthResponse> {
-      const res = await apiRequest<AuthResponse>("/api/auth/register", {
+      return apiRequest("/api/auth/register", {
         method: "POST",
         body: JSON.stringify(data),
+        skipAuth: true,
       })
-      if (res.token) {
-        localStorage.setItem("landai_token", res.token)
-      }
-      return res
+    },
+
+    async session(idToken: string): Promise<AuthResponse> {
+      return apiRequest("/api/auth/session", {
+        method: "POST",
+        body: JSON.stringify({ idToken }),
+        skipAuth: true,
+      })
+    },
+
+    async getMe(): Promise<{ user: User }> {
+      return apiRequest("/api/auth/me", { method: "GET" })
+    },
+
+    async updateProfile(data: {
+      name?: string
+      phone?: string
+      preferences?: UserPreferences
+    }): Promise<AuthResponse> {
+      return apiRequest("/api/auth/me", {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      })
     },
 
     async logout(): Promise<void> {
-      try {
-        await apiRequest("/api/auth/logout", { method: "POST" })
-      } finally {
-        localStorage.removeItem("landai_token")
-      }
-    },
-
-    async resetPassword(data: {
-      email: string
-      newPassword: string
-      confirmPassword: string
-    }): Promise<{ success: boolean; message: string }> {
-      return apiRequest("/api/auth/reset-password", {
-        method: "POST",
-        body: JSON.stringify(data),
-      })
+      await apiRequest("/api/auth/logout", { method: "POST" }).catch(() => null)
     },
   },
 
-  // Properties & Marketplace
   properties: {
-    async getAll(): Promise<{ properties: Property[] }> {
-      return apiRequest<{ properties: Property[] }>("/api/properties", {
+    async search(params: Record<string, string | number | undefined> = {}) {
+      const qs = new URLSearchParams()
+      Object.entries(params).forEach(([k, v]) => {
+        if (v != null && v !== "") qs.set(k, String(v))
+      })
+      const query = qs.toString()
+      return apiRequest<{
+        properties: Property[]
+        pagination: {
+          page: number
+          pageSize: number
+          total: number
+          totalPages: number
+        }
+        data_note?: string
+      }>(`/api/properties${query ? `?${query}` : ""}`, { method: "GET" })
+    },
+
+    async get(id: number) {
+      return apiRequest<{ property: Property }>(`/api/properties/${id}`, {
         method: "GET",
       })
     },
@@ -288,42 +297,58 @@ export const api = {
       type: string
       image?: string
       tags?: string[]
-    }): Promise<{ success: boolean; message: string; property: Property }> {
-      return apiRequest("/api/properties", {
+      description?: string
+    }) {
+      return apiRequest<{
+        success: boolean
+        message: string
+        property: Property
+      }>("/api/properties", {
         method: "POST",
         body: JSON.stringify(propertyData),
       })
     },
 
-    async delete(id: number): Promise<{ success: boolean; message: string }> {
-      return apiRequest(`/api/properties/${id}`, { method: "DELETE" })
+    async delete(id: number) {
+      return apiRequest<{ success: boolean; message: string }>(
+        `/api/properties/${id}`,
+        { method: "DELETE" },
+      )
     },
-  },
 
-  // Inquiries & Site Visits
-  inquiries: {
-    async getAll(): Promise<{ inquiries: Inquiry[] }> {
-      return apiRequest<{ inquiries: Inquiry[] }>("/api/inquiries", {
+    async getSaved() {
+      return apiRequest<{ properties: Property[] }>("/api/saved", {
         method: "GET",
       })
     },
 
+    async save(id: number) {
+      return apiRequest(`/api/saved/${id}`, { method: "POST" })
+    },
+
+    async unsave(id: number) {
+      return apiRequest(`/api/saved/${id}`, { method: "DELETE" })
+    },
+  },
+
+  inquiries: {
+    async getAll() {
+      return apiRequest<{ inquiries: Inquiry[] }>("/api/inquiries", {
+        method: "GET",
+      })
+    },
     async create(inquiryData: {
       property_id: number
       visit_date?: string
       visit_time?: string
       message?: string
-    }): Promise<{ success: boolean; message: string; inquiryId: number }> {
+    }) {
       return apiRequest("/api/inquiries", {
         method: "POST",
         body: JSON.stringify(inquiryData),
       })
     },
-
-    async updateStatus(id: number, status: string): Promise<{
-      success: boolean
-      message: string
-    }> {
+    async updateStatus(id: number, status: string) {
       return apiRequest(`/api/inquiries/${id}/status`, {
         method: "PATCH",
         body: JSON.stringify({ status }),
@@ -331,91 +356,131 @@ export const api = {
     },
   },
 
-  // Document AI & OCR Model
-  ocr: {
-    getExportUrl(
-      documentId: string,
-      format: "txt" | "docx" | "pdf" | "json",
-    ): string {
-      const base = OCR_BASE_URL || ""
-      return `${base}/api/ocr/document/${documentId}/export/${format}`
+  documents: {
+    async list() {
+      return apiRequest<{ documents: Array<Record<string, unknown>> }>(
+        "/api/documents",
+        { method: "GET" },
+      )
     },
 
-    async checkHealth(): Promise<{
-      status: string
-      service: string
-      model_version?: string
-    }> {
-      return apiRequest("/api/ocr/health", {
+    async history() {
+      return apiRequest<{ history: Array<Record<string, unknown>> }>(
+        "/api/documents/history",
+        { method: "GET" },
+      )
+    },
+
+    async checkOcrHealth() {
+      return apiRequest("/api/documents/health/ocr", {
         method: "GET",
-        isOcr: true,
         timeoutMs: 5000,
       })
     },
 
-    async upload(file: File, language = "ta-en"): Promise<{
-      document_id: string
-      filename: string
-      size: number
-    }> {
+    async upload(file: File, language = "ta-en") {
       const form = new FormData()
       form.append("file", file)
       form.append("language", language)
-
-      return apiRequest("/api/ocr/upload", {
+      return apiRequest<{
+        document_id: string
+        local_id: number
+        filename: string
+        size: number
+        status: string
+      }>("/api/documents/upload", {
         method: "POST",
         body: form,
-        isOcr: true,
         timeoutMs: 60000,
       })
     },
 
-    async process(documentId: string): Promise<any> {
-      return apiRequest("/api/ocr/process", {
+    async process(documentId: string) {
+      return apiRequest<OcrDocument>("/api/documents/process", {
         method: "POST",
         body: JSON.stringify({ document_id: documentId }),
-        isOcr: true,
-        timeoutMs: 90000,
+        timeoutMs: 180000,
       })
     },
 
-    async uploadAndProcess(
-      file: File,
-      language = "ta-en",
-    ): Promise<OcrDocument> {
+    async uploadAndProcess(file: File, language = "ta-en") {
       const uploaded = await this.upload(file, language)
       const processed = await this.process(uploaded.document_id)
-
       return {
         ...processed,
         document_id: uploaded.document_id,
-        engine: processed.processing?.engine || "tesseract",
-        model_version:
-          processed.processing?.model_version || "tesseract-default",
-      }
+        local_id: uploaded.local_id,
+        engine: "tesseract",
+      } as OcrDocument
     },
 
-    async saveCorrections(
-      documentId: string,
-      pages: Record<string, string>,
-    ): Promise<any> {
-      return apiRequest(`/api/ocr/document/${documentId}/corrections`, {
+    async get(id: string | number) {
+      return apiRequest<OcrDocument>(`/api/documents/${id}`, { method: "GET" })
+    },
+
+    async saveCorrections(id: string | number, pages: Record<string, string>) {
+      return apiRequest(`/api/documents/${id}/corrections`, {
         method: "PUT",
         body: JSON.stringify({ pages }),
-        isOcr: true,
-        timeoutMs: 30000,
       })
+    },
+
+    async approveFields(
+      id: string | number,
+      approved_fields: Record<string, unknown>,
+    ) {
+      return apiRequest(`/api/documents/${id}/fields`, {
+        method: "PUT",
+        body: JSON.stringify({ approved_fields }),
+      })
+    },
+
+    async validate(id: string | number) {
+      return apiRequest<ValidationResult>(`/api/documents/${id}/validate`, {
+        method: "POST",
+        timeoutMs: 60000,
+      })
+    },
+
+    getExportUrl(id: string | number, format: "txt" | "json" | "pdf" | "docx") {
+      return `${API_BASE_URL}/api/documents/${id}/export/${format}`
+    },
+
+    getValidationReportUrl(id: string | number) {
+      return `${API_BASE_URL}/api/documents/${id}/validation/report`
+    },
+
+    async downloadExport(
+      id: string | number,
+      format: "txt" | "json" | "pdf" | "docx",
+    ) {
+      const token = await getIdToken()
+      const response = await fetch(this.getExportUrl(id, format), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: "include",
+      })
+      if (!response.ok) {
+        throw new ApiError("Export failed.", response.status)
+      }
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `landai-export.${format}`
+      a.click()
+      URL.revokeObjectURL(url)
     },
   },
 
-  // System Diagnostics
   system: {
-    async checkHealth(): Promise<{
-      status: string
-      service: string
-      timestamp: string
-    }> {
-      return apiRequest("/api/health", { method: "GET", timeoutMs: 5000 })
+    async checkHealth() {
+      return apiRequest<{
+        status: string
+        service: string
+        timestamp: string
+        firebase_admin?: boolean
+        firebase_message?: string
+      }>("/api/health", { method: "GET", timeoutMs: 5000, skipAuth: true })
     },
   },
 }

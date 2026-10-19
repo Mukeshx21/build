@@ -239,19 +239,27 @@ def base_document(document: sqlite3.Row, pages: list[sqlite3.Row]) -> dict[str, 
 
 def extract_fields(text: str) -> dict[str, dict[str, str | None]]:
     patterns = {
-        "survey_number": r"(?:survey|s\.?\s*no|சர்வே|புல எண்)\s*(?:no\.?|number|எண்)?\s*[:\-]?\s*([^\n,;]+)",
+        "survey_number": r"(?:survey|s\.?\s*no|சர்வே|புல எண்|subdivision|உட்பிரிவு)\s*(?:no\.?|number|எண்)?\s*[:\-]?\s*([^\n,;]+)",
         "patta_number": r"(?:patta|பட்டா)\s*(?:no\.?|number|எண்)?\s*[:\-]?\s*([^\n,;]+)",
         "registration_number": r"(?:registration|பதிவு)\s*(?:no\.?|number|எண்)?\s*[:\-]?\s*([^\n,;]+)",
         "registration_date": r"(?:date|தேதி)\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
-        "land_area": r"(?:extent|area|பரப்பளவு)\s*[:\-]?\s*([^\n,;]+)",
+        "land_area": r"(?:extent|area|பரப்பளவு|hectare|acre|சென்ட்)\s*[:\-]?\s*([^\n,;]+)",
         "village": r"(?:village|கிராமம்)\s*[:\-]?\s*([^\n,;]+)",
-        "taluk": r"(?:taluk|தாலுகா)\s*[:\-]?\s*([^\n,;]+)",
+        "taluk": r"(?:taluk|தாலுகா|taluka)\s*[:\-]?\s*([^\n,;]+)",
         "district": r"(?:district|மாவட்டம்)\s*[:\-]?\s*([^\n,;]+)",
+        "state": r"(?:state|மாநிலம்)\s*[:\-]?\s*([^\n,;]+)",
+        "owner_name": r"(?:owner|patta\s*holder|பெயர்|உரிமையாளர்|பட்டாதாரர்)\s*(?:name|பெயர்)?\s*[:\-]?\s*([^\n,;]+)",
+        "boundaries": r"(?:boundar(?:y|ies)|எல்லை)\s*[:\-]?\s*([^\n]+)",
     }
     result = {}
     for field, pattern in patterns.items():
         match = re.search(pattern, text, flags=re.IGNORECASE)
-        result[field] = {"value": match.group(1).strip() if match else None, "status": "needs_review" if not match else "detected"}
+        if match:
+            value = match.group(1).strip()
+            # Never invent values — only keep what matched in source text
+            result[field] = {"value": value, "status": "detected", "source": "ocr_regex"}
+        else:
+            result[field] = {"value": None, "status": "missing", "source": "ocr_regex"}
     return result
 
 
