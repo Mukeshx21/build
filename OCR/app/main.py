@@ -63,11 +63,31 @@ for directory in (UPLOADS, EXPORTS):
 app = FastAPI(title="LandAI Bilingual OCR", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
-    allow_methods=["GET", "POST", "PUT"],
-    allow_headers=["Content-Type"],
+    allow_origin_regex=r".*",
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
 app.mount("/static", StaticFiles(directory=ROOT / "app" / "static"), name="static")
+
+@app.get("/api/ocr/health")
+def ocr_health() -> dict[str, Any]:
+    try:
+        languages = pytesseract.get_languages()
+        tesseract_ok = True
+    except Exception as e:
+        languages = []
+        tesseract_ok = False
+    return {
+        "status": "ok" if tesseract_ok else "degraded",
+        "service": "LandAI Bilingual OCR Engine",
+        "tesseract_cmd": getattr(pytesseract.pytesseract, "tesseract_cmd", "tesseract"),
+        "languages": languages,
+        "model_version": OCR_MODEL_VERSION,
+        "timestamp": now(),
+    }
+
 
 
 def db() -> sqlite3.Connection:

@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "server": "node server/server.js",
-    "start": "concurrently \"node server/server.js\" \"vite\"",
+    "ocr": "python -m uvicorn app.main:app --port 8000 --app-dir OCR",
+    "start": "concurrently \"node server/server.js\" \"vite\" \"python -m uvicorn app.main:app --port 8000 --app-dir OCR\"",
+    "start:all": "concurrently \"node server/server.js\" \"vite\" \"python -m uvicorn app.main:app --port 8000 --app-dir OCR\"",
     "build": "vite build",
     "preview": "vite preview",
     "format": "oxfmt"
@@ -15,7 +17,7 @@
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.1",
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "11.10.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^18.0.7",
