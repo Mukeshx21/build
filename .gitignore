@@ -18,11 +18,6 @@ OCR/data/*.sqlite3
 OCR/data/*.sqlite3-*
 server/data/*.sqlite
 server/data/*.sqlite-*
-/.figma/design-context/
-
-# Platform-managed agentplat state, not project source. In the
-# client-initiated single-repo workspace layout (make's `Path: "."` spec) the
-# repo root IS the workspace root, so these land inside this repo rather than
-# beside it.
+scratch/
 /.plugins/
 /.opencode-skills/

@@ -26,32 +26,42 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
+from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
+# Load .env from OCR dir or project root
+load_dotenv(ROOT / ".env")
+load_dotenv(ROOT.parent / ".env")
+
 DATA = ROOT / "data"
 UPLOADS = DATA / "uploads"
 EXPORTS = DATA / "exports"
 DB_PATH = DATA / "landai.sqlite3"
 ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
 MAX_BYTES = 50 * 1024 * 1024
-TAMIL_FONT_PATH = os.getenv("LANDAI_TAMIL_FONT", r"C:\Windows\Fonts\NotoSansTamil-Regular.ttf")
+TAMIL_FONT_PATH = os.getenv("LANDAI_TAMIL_FONT", r"C:\Windows\Fots\NotoSansTamil-Regular.ttf")
 TESSDATA_DIR = Path(os.getenv("TESSDATA_DIR", str(DATA / "tessdata")))
 OCR_MODEL_VERSION = os.getenv("LANDAI_OCR_MODEL_VERSION", "tesseract-default")
 OCR_PSM = os.getenv("LANDAI_OCR_PSM", "6")
+
 if os.getenv("TESSERACT_CMD"):
     pytesseract.pytesseract.tesseract_cmd = os.environ["TESSERACT_CMD"]
 else:
     tesseract_candidates = [
-        Path(os.environ.get("LOCALAPPDATA", "")) / "Tesseract-OCR" / "tesseract.exe",
         Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Tesseract-OCR" / "tesseract.exe",
         Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
     ]
     for tesseract_path in tesseract_candidates:
         if tesseract_path.exists():
             pytesseract.pytesseract.tesseract_cmd = str(tesseract_path)
             break
+
 if TESSDATA_DIR.is_dir():
     os.environ["TESSDATA_PREFIX"] = str(TESSDATA_DIR)
+elif Path(r"C:\Program Files\Tesseract-OCR\tessdata").is_dir():
+    os.environ.setdefault("TESSDATA_PREFIX", r"C:\Program Files\Tesseract-OCR\tessdata")
+
 REPORT_FONT = "Helvetica"
 if Path(TAMIL_FONT_PATH).exists():
     pdfmetrics.registerFont(TTFont("LandAITamil", TAMIL_FONT_PATH))
@@ -123,7 +133,9 @@ init_db()
 
 
 class ProcessRequest(BaseModel):
-    document_id: str
+    document_id: str | None = None
+    id: str | None = None
+    doc_id: str | None = None
 
 
 class CorrectionRequest(BaseModel):
@@ -155,6 +167,16 @@ def render_pages(path: Path, content_type: str) -> list[tuple[Image.Image, int]]
     return [(Image.open(path).convert("RGB"), 1)]
 
 
+def extract_pdf_text(path: Path) -> list[tuple[int, str]]:
+    if path.suffix.lower() != ".pdf":
+        return []
+    source = fitz.open(path)
+    try:
+        return [(number, page.get_text("text").strip()) for number, page in enumerate(source, start=1)]
+    finally:
+        source.close()
+
+
 def preprocess(image: Image.Image) -> Image.Image:
     array = cv2.cvtColor(__import__("numpy").array(image), cv2.COLOR_RGB2BGR)
     gray = cv2.cvtColor(array, cv2.COLOR_BGR2GRAY)
@@ -183,7 +205,13 @@ def ocr_page(image: Image.Image, language: str) -> tuple[str, float | None, list
         raise RuntimeError("Tesseract is not installed or is not on PATH") from exc
     missing = [part for part in requested.split("+") if part not in available]
     if missing:
-        raise RuntimeError(f"Tesseract language data missing: {', '.join(missing)}")
+        valid_parts = [part for part in requested.split("+") if part in available]
+        if valid_parts:
+            requested = "+".join(valid_parts)
+        elif "eng" in available:
+            requested = "eng"
+        else:
+            raise RuntimeError(f"Tesseract language data missing: {', '.join(missing)}")
     processed = preprocess(image)
     data = pytesseract.image_to_data(processed, lang=requested, config=f"--psm {OCR_PSM}", output_type=Output.DICT)
     lines: dict[tuple[int, int, int], list[dict[str, Any]]] = {}
@@ -228,7 +256,7 @@ def base_document(document: sqlite3.Row, pages: list[sqlite3.Row]) -> dict[str, 
             {"page_number": page["page_number"], "text": page["text"], "detected_language": page["detected_language"],
              "confidence": page["confidence"], "status": page["status"], "warnings": json.loads(page["warnings"] or "[]"),
              "words": json.loads(page["words_json"] or "[]")} for page in pages
-        ], "fields": fields, "processing": {
+        ], "fields": fields, "document_type": detect_document_type(full_text), "processing": {
             "engine": "tesseract",
             "model_version": OCR_MODEL_VERSION,
             "tessdata_dir": str(TESSDATA_DIR),
@@ -239,28 +267,46 @@ def base_document(document: sqlite3.Row, pages: list[sqlite3.Row]) -> dict[str, 
 
 def extract_fields(text: str) -> dict[str, dict[str, str | None]]:
     patterns = {
-        "survey_number": r"(?:survey|s\.?\s*no|சர்வே|புல எண்|subdivision|உட்பிரிவு)\s*(?:no\.?|number|எண்)?\s*[:\-]?\s*([^\n,;]+)",
-        "patta_number": r"(?:patta|பட்டா)\s*(?:no\.?|number|எண்)?\s*[:\-]?\s*([^\n,;]+)",
-        "registration_number": r"(?:registration|பதிவு)\s*(?:no\.?|number|எண்)?\s*[:\-]?\s*([^\n,;]+)",
-        "registration_date": r"(?:date|தேதி)\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
-        "land_area": r"(?:extent|area|பரப்பளவு|hectare|acre|சென்ட்)\s*[:\-]?\s*([^\n,;]+)",
+        "survey_number": r"(?:survey\s*(?:no\.?|number)?|s\.?\s*no\.?|சர்வே\s*(?:எண்)?|புல\s*எண்)\s*[:\-]?\s*([A-Za-z0-9\/\-]+)",
+        "subdivision_number": r"(?:subdivision\s*(?:no\.?|number)?|உட்பிரிவு\s*(?:எண்)?)\s*[:\-]?\s*([A-Za-z0-9\/\-]+)",
+        "patta_number": r"(?:patta\s*(?:no\.?|number)?|பட்டா\s*(?:எண்)?)\s*[:\-]?\s*([A-Za-z0-9\/\-]+)",
+        "registration_number": r"(?:registration|doc(?:ument)?\s*(?:no\.?|number)|பதிவு\s*(?:எண்)?)\s*[:\-]?\s*([A-Za-z0-9\/\-]+)",
+        "registration_date": r"(?:registration\s*date|date\s*of\s*execution|தேதி)\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
+        "sub_registrar_office": r"(?:sub[\s-]*registrar(?:\s*office)?|sro|பதிவாளர்\s*அலுவலகம்)\s*[:\-]?\s*([^\n,;]+)",
+        "owner_name": r"(?:owner|patta\s*holder|land\s*owner|உரிமையாளர்|பட்டாதாரர்)\s*(?:name|பெயர்)?\s*[:\-]?\s*([^\n,;]+)",
+        "seller_name": r"(?:seller|vendor|executant|விற்பனையாளர்)\s*(?:name|பெயர்)?\s*[:\-]?\s*([^\n,;]+)",
+        "buyer_name": r"(?:buyer|purchaser|claimant|வாங்குபவர்)\s*(?:name|பெயர்)?\s*[:\-]?\s*([^\n,;]+)",
+        "land_area": r"(?:extent|land\s*area|area|பரப்பளவு|hectare|acre|சென்ட்|sq\.?\s*ft)\s*[:\-]?\s*([^\n,;]+)",
         "village": r"(?:village|கிராமம்)\s*[:\-]?\s*([^\n,;]+)",
         "taluk": r"(?:taluk|தாலுகா|taluka)\s*[:\-]?\s*([^\n,;]+)",
         "district": r"(?:district|மாவட்டம்)\s*[:\-]?\s*([^\n,;]+)",
         "state": r"(?:state|மாநிலம்)\s*[:\-]?\s*([^\n,;]+)",
-        "owner_name": r"(?:owner|patta\s*holder|பெயர்|உரிமையாளர்|பட்டாதாரர்)\s*(?:name|பெயர்)?\s*[:\-]?\s*([^\n,;]+)",
-        "boundaries": r"(?:boundar(?:y|ies)|எல்லை)\s*[:\-]?\s*([^\n]+)",
+        "boundaries": r"(?:boundar(?:y|ies)|நான்கெல்லை|எல்லை)\s*[:\-]?\s*([^\n]+)",
     }
     result = {}
     for field, pattern in patterns.items():
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
             value = match.group(1).strip()
-            # Never invent values — only keep what matched in source text
             result[field] = {"value": value, "status": "detected", "source": "ocr_regex"}
         else:
             result[field] = {"value": None, "status": "missing", "source": "ocr_regex"}
     return result
+
+
+def detect_document_type(text: str) -> str:
+    lower = text.lower()
+    if re.search(r"\bpatta\b|பட்டா", lower):
+        return "patta"
+    if re.search(r"encumbrance|certificate of encumbrance|\bec\b", lower):
+        return "encumbrance_certificate"
+    if re.search(r"sale deed|sale agreement|விற்பனை", lower):
+        return "sale_deed"
+    if re.search(r"fmb|field measurement|survey sketch", lower):
+        return "survey_fmb"
+    if re.search(r"passport|driving licence|aadhaar|identity", lower):
+        return "identity"
+    return "unknown"
 
 
 @app.get("/", include_in_schema=False)
@@ -291,28 +337,36 @@ async def upload(file: UploadFile = File(...), language: str = "ta-en") -> dict[
 
 @app.post("/api/ocr/process")
 def process(request: ProcessRequest) -> dict[str, Any]:
-    document = get_document(request.document_id)
+    target_id = request.document_id or request.id or request.doc_id
+    if not target_id:
+        raise HTTPException(400, "document_id is required.")
+    document = get_document(target_id)
     if document["status"] == "processing":
         raise HTTPException(409, "Document is already processing")
     path = Path(document["stored_path"])
     with db() as connection:
-        connection.execute("UPDATE documents SET status = ?, updated_at = ?, warning = ? WHERE id = ?", ("processing", now(), "", request.document_id))
+        connection.execute("UPDATE documents SET status = ?, updated_at = ?, warning = ? WHERE id = ?", ("processing", now(), "", target_id))
     try:
         pages = render_pages(path, document["content_type"])
+        pdf_text = dict(extract_pdf_text(path))
         with db() as connection:
-            connection.execute("DELETE FROM pages WHERE document_id = ?", (request.document_id,))
+            connection.execute("DELETE FROM pages WHERE document_id = ?", (target_id,))
             for image, page_number in pages:
-                text, confidence, words, warnings = ocr_page(image, document["language"])
+                embedded_text = pdf_text.get(page_number, "")
+                if len(re.sub(r"\s+", "", embedded_text)) >= 30:
+                    text, confidence, words, warnings = embedded_text, 100.0, [], []
+                else:
+                    text, confidence, words, warnings = ocr_page(image, document["language"])
                 connection.execute(
                     "INSERT INTO pages(document_id, page_number, text, detected_language, confidence, status, warnings, words_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (request.document_id, page_number, text, detect_language(text), confidence, "complete", json.dumps(warnings, ensure_ascii=False), json.dumps(words, ensure_ascii=False)),
+                    (target_id, page_number, text, detect_language(text), confidence, "complete", json.dumps(warnings, ensure_ascii=False), json.dumps(words, ensure_ascii=False)),
                 )
-            connection.execute("UPDATE documents SET status = ?, page_count = ?, updated_at = ? WHERE id = ?", ("complete", len(pages), now(), request.document_id))
+            connection.execute("UPDATE documents SET status = ?, page_count = ?, updated_at = ? WHERE id = ?", ("complete", len(pages), now(), target_id))
     except Exception as exc:
         with db() as connection:
-            connection.execute("UPDATE documents SET status = ?, updated_at = ?, warning = ? WHERE id = ?", ("error", now(), str(exc), request.document_id))
+            connection.execute("UPDATE documents SET status = ?, updated_at = ?, warning = ? WHERE id = ?", ("error", now(), str(exc), target_id))
         raise HTTPException(422, str(exc)) from exc
-    return get_document_response(request.document_id)
+    return get_document_response(target_id)
 
 
 def get_document_response(document_id: str) -> dict[str, Any]:

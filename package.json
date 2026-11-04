@@ -1,14 +1,17 @@
 {
-  "name": "figma-make-app",
+  "name": "landai",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:studio": "vite",
     "server": "node server/server.js",
-    "ocr": "python -m uvicorn app.main:app --port 8000 --app-dir OCR",
-    "start": "concurrently \"node server/server.js\" \"vite\" \"python -m uvicorn app.main:app --port 8000 --app-dir OCR\"",
-    "start:all": "concurrently \"node server/server.js\" \"vite\" \"python -m uvicorn app.main:app --port 8000 --app-dir OCR\"",
+    "ocr": "python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --app-dir OCR",
+    "dev:all": "concurrently -k \"npm run ocr\" \"vite\"",
+    "start": "concurrently \"node server/server.js\" \"vite\" \"python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --app-dir OCR\"",
+    "start:app": "concurrently \"node server/server.js\" \"vite\"",
+    "start:all": "concurrently \"node server/server.js\" \"vite\" \"python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --app-dir OCR\"",
     "build": "vite build",
     "preview": "vite preview",
     "format": "oxfmt"
@@ -22,15 +25,15 @@
     "cors": "^2.8.6",
     "dotenv": "^18.0.7",
     "express": "^5.3.0",
-    "firebase": "^10.14.1",
-    "firebase-admin": "^13.10.0",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^1.55.0",
     "multer": "^2.4.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.18.4",
-    "three": "^0.186.1"
+    "sql.js": "^1.15.1",
+    "three": "^0.186.1",
+    "zustand": "^5.0.16"
   },
   "devDependencies": {
     "@rolldown/binding-win32-x64-msvc": "^1.2.13",

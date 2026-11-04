@@ -1,7 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
 import db, { logHistory } from "../db.js";
-import { authenticate, requireVerifiedEmail } from "../middleware/auth.js";
+import { authenticate } from "../middleware/auth.js";
 import { ocrFetch, OcrUpstreamError } from "../services/ocrClient.js";
 import {
   validateLandRecord,
@@ -31,7 +31,7 @@ const upload = multer({
 function handleOcrError(err, res) {
   if (err instanceof OcrUpstreamError) {
     return res.status(err.status >= 400 && err.status < 600 ? err.status : 502).json({
-      error: err.message,
+      error: err.status >= 500 ? "The OCR service is currently unavailable. Please ensure the Python OCR service is running on port 8000 (run 'npm run ocr' or 'npm run dev:all')." : err.message,
     });
   }
   if (err instanceof multer.MulterError) {
@@ -41,7 +41,7 @@ function handleOcrError(err, res) {
     return res.status(400).json({ error: err.message });
   }
   console.error("Document route error:", err);
-  return res.status(500).json({ error: err.message || "Document processing failed." });
+  return res.status(500).json({ error: "Document processing failed. Please try again." });
 }
 
 function mapDocumentRow(row) {
@@ -49,6 +49,7 @@ function mapDocumentRow(row) {
     id: row.id,
     ocr_document_id: row.ocr_document_id,
     original_name: row.original_name,
+    document_type: row.document_type || "unknown",
     content_type: row.content_type,
     language: row.language,
     status: row.status,
@@ -62,10 +63,14 @@ function mapDocumentRow(row) {
 }
 
 function getOwnedDocument(userId, idOrOcrId) {
-  const byPk = db
-    .prepare("SELECT * FROM documents WHERE id = ? AND user_id = ?")
-    .get(Number(idOrOcrId), userId);
-  if (byPk) return byPk;
+  if (idOrOcrId === undefined || idOrOcrId === null || idOrOcrId === "") return null;
+  const num = Number(idOrOcrId);
+  if (!Number.isNaN(num) && Number.isInteger(num) && num > 0) {
+    const byPk = db
+      .prepare("SELECT * FROM documents WHERE id = ? AND user_id = ?")
+      .get(num, userId);
+    if (byPk) return byPk;
+  }
   return db
     .prepare("SELECT * FROM documents WHERE ocr_document_id = ? AND user_id = ?")
     .get(String(idOrOcrId), userId);
@@ -80,7 +85,7 @@ router.get("/health/ocr", authenticate, async (_req, res) => {
   }
 });
 
-router.get("/", authenticate, requireVerifiedEmail, (req, res) => {
+router.get("/", authenticate, (req, res) => {
   const rows = db
     .prepare(
       `SELECT * FROM documents WHERE user_id = ? ORDER BY id DESC LIMIT 100`,
@@ -89,7 +94,7 @@ router.get("/", authenticate, requireVerifiedEmail, (req, res) => {
   return res.json({ documents: rows.map(mapDocumentRow) });
 });
 
-router.get("/history", authenticate, requireVerifiedEmail, (req, res) => {
+router.get("/history", authenticate, (req, res) => {
   const rows = db
     .prepare(
       `SELECT h.*, d.original_name
@@ -106,7 +111,6 @@ router.get("/history", authenticate, requireVerifiedEmail, (req, res) => {
 router.post(
   "/upload",
   authenticate,
-  requireVerifiedEmail,
   (req, res, next) => {
     upload.single("file")(req, res, (err) => {
       if (err) return handleOcrError(err, res);
@@ -131,22 +135,27 @@ router.post(
       });
 
       const insert = db.prepare(`
-        INSERT INTO documents (user_id, ocr_document_id, original_name, content_type, language, status)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO documents (user_id, ocr_document_id, original_name, document_type, content_type, language, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
       const result = insert.run(
         req.user.id,
         data.document_id,
         req.file.originalname,
+        String(req.body.document_type || "unknown").slice(0, 60),
         req.file.mimetype,
         language,
         "uploaded",
       );
       logHistory(req.user.id, "upload", req.file.originalname, Number(result.lastInsertRowid));
 
+      const localId = Number(result.lastInsertRowid);
       return res.status(201).json({
-        document_id: data.document_id,
-        local_id: Number(result.lastInsertRowid),
+        id: localId,
+        local_id: localId,
+        document_id: localId,
+        ocr_document_id: data.document_id,
+        document_type: String(req.body.document_type || "unknown"),
         filename: req.file.originalname,
         size: req.file.size,
         status: "uploaded",
@@ -157,10 +166,17 @@ router.post(
   },
 );
 
-router.post("/process", authenticate, requireVerifiedEmail, async (req, res) => {
+router.post("/process", authenticate, async (req, res) => {
   try {
-    const documentId = req.body?.document_id;
-    if (!documentId) {
+    const documentId =
+      req.body?.document_id ??
+      req.body?.documentId ??
+      req.body?.id ??
+      req.body?.local_id ??
+      req.query?.document_id ??
+      req.query?.id;
+
+    if (documentId === undefined || documentId === null || documentId === "") {
       return res.status(400).json({ error: "document_id is required." });
     }
     const owned = getOwnedDocument(req.user.id, documentId);
@@ -190,12 +206,18 @@ router.post("/process", authenticate, requireVerifiedEmail, async (req, res) => 
       JSON.stringify(data.fields || {}),
       owned.id,
     );
+    if (data.document_type) {
+      db.prepare("UPDATE documents SET document_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .run(String(data.document_type).slice(0, 60), owned.id);
+    }
     logHistory(req.user.id, "ocr_process", owned.original_name, owned.id);
 
     return res.json({
       ...data,
-      document_id: owned.ocr_document_id,
+      id: owned.id,
+      document_id: owned.id,
       local_id: owned.id,
+      ocr_document_id: owned.ocr_document_id,
       original_name: data.original_name || owned.original_name,
     });
   } catch (err) {
@@ -203,7 +225,42 @@ router.post("/process", authenticate, requireVerifiedEmail, async (req, res) => 
   }
 });
 
-router.get("/:id", authenticate, requireVerifiedEmail, async (req, res) => {
+router.post("/compare", authenticate, (req, res) => {
+  const ids = Array.isArray(req.body?.document_ids) ? req.body.document_ids : [];
+  const uniqueIds = [...new Set(ids.map(Number).filter(Number.isInteger))];
+  if (uniqueIds.length < 2 || uniqueIds.length > 10) {
+    return res.status(400).json({ error: "Select between 2 and 10 documents to compare." });
+  }
+  const placeholders = uniqueIds.map(() => "?").join(",");
+  const rows = db.prepare(
+    `SELECT * FROM documents WHERE user_id = ? AND id IN (${placeholders})`,
+  ).all(req.user.id, ...uniqueIds);
+  if (rows.length !== uniqueIds.length) {
+    return res.status(404).json({ error: "One or more selected documents were not found." });
+  }
+  const keys = ["owner_name", "seller_name", "buyer_name", "survey_number", "village", "district", "land_area"];
+  const comparisons = keys.map((key) => {
+    const values = rows.map((row) => {
+      const fields = { ...safeParse(row.fields_json, {}), ...safeParse(row.approved_fields_json, {}) };
+      const entry = fields[key];
+      return typeof entry === "object" && entry ? entry.value || null : entry || null;
+    });
+    const normalized = values.filter(Boolean).map((value) => String(value).trim().toLowerCase());
+    return {
+      field: key,
+      values,
+      status: !normalized.length ? "not_found" : new Set(normalized).size === 1 ? "consistent" : "review",
+    };
+  });
+  return res.json({
+    document_ids: uniqueIds,
+    documents: rows.map(mapDocumentRow),
+    comparisons,
+    disclaimer: "Comparison identifies differences in extracted text; it does not establish authenticity or legal ownership.",
+  });
+});
+
+router.get("/:id", authenticate, async (req, res) => {
   try {
     const owned = getOwnedDocument(req.user.id, req.params.id);
     if (!owned) {
@@ -224,7 +281,6 @@ router.get("/:id", authenticate, requireVerifiedEmail, async (req, res) => {
 router.put(
   "/:id/corrections",
   authenticate,
-  requireVerifiedEmail,
   async (req, res) => {
     try {
       const owned = getOwnedDocument(req.user.id, req.params.id);
@@ -261,7 +317,6 @@ router.put(
 router.put(
   "/:id/fields",
   authenticate,
-  requireVerifiedEmail,
   (req, res) => {
     const owned = getOwnedDocument(req.user.id, req.params.id);
     if (!owned) {
@@ -286,7 +341,6 @@ router.put(
 router.post(
   "/:id/validate",
   authenticate,
-  requireVerifiedEmail,
   async (req, res) => {
     try {
       const owned = getOwnedDocument(req.user.id, req.params.id);
@@ -359,7 +413,6 @@ router.post(
 router.get(
   "/:id/validation/report",
   authenticate,
-  requireVerifiedEmail,
   async (req, res) => {
     try {
       const owned = getOwnedDocument(req.user.id, req.params.id);
@@ -403,7 +456,6 @@ router.get(
 router.get(
   "/:id/export/:format",
   authenticate,
-  requireVerifiedEmail,
   async (req, res) => {
     try {
       const owned = getOwnedDocument(req.user.id, req.params.id);

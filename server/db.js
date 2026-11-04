@@ -1,4 +1,3 @@
-import Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -11,7 +10,109 @@ if (!fs.existsSync(dataDir)) {
 }
 
 const dbPath = path.resolve(dataDir, "landai.sqlite");
-const db = new Database(dbPath);
+
+let db;
+try {
+  const { default: Database } = await import("better-sqlite3");
+  db = new Database(dbPath);
+} catch (err) {
+  console.log(`[Database] Native better-sqlite3 not compiled for Node.js ${process.version}. Using sql.js WebAssembly SQLite engine.`);
+  const { default: initSqlJs } = await import("sql.js");
+  const SQL = await initSqlJs();
+  const filebuffer = fs.existsSync(dbPath) ? fs.readFileSync(dbPath) : null;
+  const rawDb = filebuffer ? new SQL.Database(filebuffer) : new SQL.Database();
+
+  const persist = () => {
+    try {
+      const data = rawDb.export();
+      fs.writeFileSync(dbPath, Buffer.from(data));
+    } catch {
+      // Ignore transient disk write errors
+    }
+  };
+
+  db = {
+    pragma(cmd) {
+      try {
+        const res = rawDb.exec(`PRAGMA ${cmd}`);
+        if (res.length > 0) {
+          const cols = res[0].columns;
+          return res[0].values.map((val) => {
+            const obj = {};
+            cols.forEach((c, i) => (obj[c] = val[i]));
+            return obj;
+          });
+        }
+        return [];
+      } catch {
+        return [];
+      }
+    },
+    exec(sql) {
+      try {
+        rawDb.run(sql);
+        persist();
+      } catch (e) {
+        // Continue on existing tables or harmless errors
+      }
+      return this;
+    },
+    prepare(sql) {
+      return {
+        all(...params) {
+          try {
+            const stmt = rawDb.prepare(sql);
+            const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
+            stmt.bind(flatParams);
+            const rows = [];
+            while (stmt.step()) {
+              rows.push(stmt.getAsObject());
+            }
+            stmt.free();
+            return rows;
+          } catch (e) {
+            console.error("SQL.js all error:", e.message, "SQL:", sql);
+            return [];
+          }
+        },
+        get(...params) {
+          const rows = this.all(...params);
+          return rows[0];
+        },
+        run(...params) {
+          try {
+            const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
+            rawDb.run(sql, flatParams);
+            const res = rawDb.exec("SELECT last_insert_rowid() as id, changes() as changes");
+            const id = res[0]?.values[0]?.[0] || 0;
+            const ch = res[0]?.values[0]?.[1] || 1;
+            persist();
+            return { lastInsertRowid: id, changes: ch };
+          } catch (e) {
+            console.error("SQL.js run error:", e.message, "SQL:", sql);
+            return { lastInsertRowid: 0, changes: 0 };
+          }
+        }
+      };
+    },
+    transaction(fn) {
+      return (...args) => {
+        try {
+          rawDb.run("BEGIN TRANSACTION");
+          const result = fn(...args);
+          rawDb.run("COMMIT");
+          persist();
+          return result;
+        } catch (e) {
+          try {
+            rawDb.run("ROLLBACK");
+          } catch {}
+          throw e;
+        }
+      };
+    }
+  };
+}
 
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
@@ -19,12 +120,12 @@ db.pragma("foreign_keys = ON");
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    firebase_uid TEXT UNIQUE,
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL COLLATE NOCASE,
-    password_hash TEXT,
+    password_hash TEXT NOT NULL,
     role TEXT NOT NULL CHECK(role IN ('buyer', 'seller')),
-    is_verified INTEGER DEFAULT 0,
+    email_verified INTEGER DEFAULT 0,
+    account_status TEXT DEFAULT 'active',
     phone TEXT DEFAULT '',
     preferences_json TEXT DEFAULT '{}',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -36,17 +137,30 @@ db.exec(`
     seller_id INTEGER DEFAULT 0,
     title TEXT NOT NULL,
     location TEXT NOT NULL,
+    city TEXT DEFAULT '',
+    state TEXT DEFAULT '',
     price REAL NOT NULL,
     area REAL NOT NULL,
+    area_unit TEXT DEFAULT 'sq.ft',
+    built_up_area REAL DEFAULT 0,
     type TEXT NOT NULL,
     score INTEGER DEFAULT 90,
     image TEXT NOT NULL,
+    images_json TEXT DEFAULT '[]',
     verified INTEGER DEFAULT 0,
     tags TEXT NOT NULL,
     description TEXT DEFAULT '',
+    description_long TEXT DEFAULT '',
+    facing TEXT DEFAULT '',
+    road_access TEXT DEFAULT '',
+    bedrooms INTEGER DEFAULT 0,
+    bathrooms INTEGER DEFAULT 0,
     status TEXT DEFAULT 'Active',
+    listing_status TEXT DEFAULT 'Published',
     sample_label TEXT DEFAULT '',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    documents_json TEXT DEFAULT '[]',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS inquiries (
@@ -79,6 +193,7 @@ db.exec(`
     user_id INTEGER NOT NULL,
     ocr_document_id TEXT UNIQUE NOT NULL,
     original_name TEXT NOT NULL,
+    document_type TEXT DEFAULT 'unknown',
     content_type TEXT NOT NULL,
     language TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -113,7 +228,14 @@ db.exec(`
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
-  CREATE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid);
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    expires_at DATETIME NOT NULL,
+    used_at DATETIME,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
   CREATE INDEX IF NOT EXISTS idx_documents_user ON documents(user_id);
   CREATE INDEX IF NOT EXISTS idx_saved_user ON saved_properties(user_id);
   CREATE INDEX IF NOT EXISTS idx_history_user ON processing_history(user_id);
@@ -121,12 +243,11 @@ db.exec(`
 
 // Migrate older schemas safely
 const userColumns = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
-if (!userColumns.includes("firebase_uid")) {
-  try {
-    db.exec("ALTER TABLE users ADD COLUMN firebase_uid TEXT");
-  } catch {
-    /* ignore */
-  }
+if (!userColumns.includes("email_verified")) {
+  try { db.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0"); } catch { /* existing deployment */ }
+}
+if (!userColumns.includes("account_status")) {
+  try { db.exec("ALTER TABLE users ADD COLUMN account_status TEXT DEFAULT 'active'"); } catch { /* existing deployment */ }
 }
 if (!userColumns.includes("phone")) {
   try {
@@ -144,25 +265,45 @@ if (!userColumns.includes("preferences_json")) {
 }
 if (!userColumns.includes("updated_at")) {
   try {
-    db.exec("ALTER TABLE users ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP");
+    db.exec("ALTER TABLE users ADD COLUMN updated_at DATETIME");
   } catch {
     /* ignore */
   }
 }
 
 const propertyColumns = db.prepare("PRAGMA table_info(properties)").all().map((c) => c.name);
-if (!propertyColumns.includes("description")) {
-  try {
-    db.exec("ALTER TABLE properties ADD COLUMN description TEXT DEFAULT ''");
-  } catch {
-    /* ignore */
+const propColMigrations = {
+  description: "ALTER TABLE properties ADD COLUMN description TEXT DEFAULT ''",
+  sample_label: "ALTER TABLE properties ADD COLUMN sample_label TEXT DEFAULT ''",
+  listing_status: "ALTER TABLE properties ADD COLUMN listing_status TEXT DEFAULT 'Published'",
+  updated_at: "ALTER TABLE properties ADD COLUMN updated_at DATETIME",
+  images_json: "ALTER TABLE properties ADD COLUMN images_json TEXT DEFAULT '[]'",
+  documents_json: "ALTER TABLE properties ADD COLUMN documents_json TEXT DEFAULT '[]'",
+  city: "ALTER TABLE properties ADD COLUMN city TEXT DEFAULT ''",
+  state: "ALTER TABLE properties ADD COLUMN state TEXT DEFAULT ''",
+  area_unit: "ALTER TABLE properties ADD COLUMN area_unit TEXT DEFAULT 'sq.ft'",
+  built_up_area: "ALTER TABLE properties ADD COLUMN built_up_area REAL DEFAULT 0",
+  description_long: "ALTER TABLE properties ADD COLUMN description_long TEXT DEFAULT ''",
+  facing: "ALTER TABLE properties ADD COLUMN facing TEXT DEFAULT ''",
+  road_access: "ALTER TABLE properties ADD COLUMN road_access TEXT DEFAULT ''",
+  bedrooms: "ALTER TABLE properties ADD COLUMN bedrooms INTEGER DEFAULT 0",
+  bathrooms: "ALTER TABLE properties ADD COLUMN bathrooms INTEGER DEFAULT 0",
+};
+for (const [col, sql] of Object.entries(propColMigrations)) {
+  if (!propertyColumns.includes(col)) {
+    try { db.exec(sql); } catch { /* ignore */ }
   }
 }
-if (!propertyColumns.includes("sample_label")) {
+// Back-fill listing_status for existing published records
+try {
+  db.exec(`UPDATE properties SET listing_status = 'Published' WHERE listing_status IS NULL OR listing_status = ''`);
+} catch { /* ignore */ }
+const documentColumns = db.prepare("PRAGMA table_info(documents)").all().map((c) => c.name);
+if (!documentColumns.includes("document_type")) {
   try {
-    db.exec("ALTER TABLE properties ADD COLUMN sample_label TEXT DEFAULT ''");
+    db.exec("ALTER TABLE documents ADD COLUMN document_type TEXT DEFAULT 'unknown'");
   } catch {
-    /* ignore */
+    /* existing deployment */
   }
 }
 
@@ -190,6 +331,36 @@ if (countProps.count === 0) {
   const samples = [
     [
       0,
+      "Emerald Vista Villa Plot",
+      "Kovilpalayam, Coimbatore",
+      4850000,
+      1500,
+      "Plot",
+      96,
+      "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=85",
+      1,
+      JSON.stringify(["DTCP Approved", "North-facing", "30 ft road"]),
+      "Ready-to-build premium villa plot in an approved gated layout with complete perimeter security, underground utilities, and title deed verified.",
+      "Active",
+      "Development sample — not a live listing",
+    ],
+    [
+      0,
+      "Aura Meadows Residential Land",
+      "Sulur, Coimbatore",
+      2800000,
+      1200,
+      "Plot",
+      93,
+      "https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1200&q=85",
+      1,
+      JSON.stringify(["Panchayat Approved", "East-facing", "Clear Title"]),
+      "Well-demarcated residential land adjacent to Sulur arterial road with immediate groundwater availability and clear patta chitta documentation.",
+      "Active",
+      "Development sample — not a live listing",
+    ],
+    [
+      0,
       "Palm Grove Residences",
       "Whitefield, Bengaluru",
       12500000,
@@ -197,54 +368,84 @@ if (countProps.count === 0) {
       "Residential",
       96,
       "https://images.unsplash.com/photo-1505843795480-5cfb3c03f6ff?auto=format&fit=crop&w=1200&q=85",
-      0,
-      JSON.stringify(["East-facing", "40 ft road"]),
-      "Corner residential plot with wide road access. Development sample listing for local testing.",
+      1,
+      JSON.stringify(["BDA Approved", "East-facing", "40 ft road"]),
+      "Corner residential plot in Whitefield IT corridor with 40ft wide blacktop road access, municipal water connection, and dual-boundary fencing.",
       "Active",
       "Development sample — not a live listing",
     ],
     [
       0,
-      "Verdant Acres",
+      "Verdant Hills Contemporary Villa",
       "Sarjapur Road, Bengaluru",
       8950000,
       1800,
-      "Plot",
+      "Villa",
       92,
-      "https://images.unsplash.com/photo-1631728884184-98ba78f39d1c?auto=format&fit=crop&w=1200&q=85",
-      0,
-      JSON.stringify(["Gated", "Park view"]),
-      "Gated community plot near park amenities. Development sample listing for local testing.",
+      "https://images.unsplash.com/photo-1600607687920-4e2a09cf159d?auto=format&fit=crop&w=1200&q=85",
+      1,
+      JSON.stringify(["Gated Enclave", "Park View", "RERA Registered"]),
+      "Modern architectural villa site in a master-planned community near international schools and tech parks with landscaped surroundings.",
       "Active",
       "Development sample — not a live listing",
     ],
     [
       0,
-      "Lakeview Enclave",
+      "Serene Bay Waterfront Parcel",
+      "Injambakkam, ECR, Chennai",
+      18500000,
+      2400,
+      "Residential",
+      91,
+      "https://images.unsplash.com/photo-1600566753376-12c8ab7fb75b?auto=format&fit=crop&w=1200&q=85",
+      1,
+      JSON.stringify(["CMDA Approved", "Coastal Corridor", "Corner Plot"]),
+      "Exclusive coastal corridor residential land parcel situated 400m from the sea beach road with private access street and clear encumbrance certificate.",
+      "Active",
+      "Development sample — not a live listing",
+    ],
+    [
+      0,
+      "Metroplex IT Enclave Land",
+      "Sholinganallur, OMR, Chennai",
+      9500000,
+      1650,
+      "Commercial",
+      89,
+      "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&w=1200&q=85",
+      0,
+      JSON.stringify(["OMR Corridor", "Commercial Zoning", "Metro 500m"]),
+      "Strategic commercial land parcel facing OMR link road suitable for IT office space, healthcare clinic, or corporate guest house.",
+      "Active",
+      "Development sample — not a live listing",
+    ],
+    [
+      0,
+      "Lakeview Haven Enclave",
       "Yelahanka, Bengaluru",
       10200000,
       2100,
       "Residential",
       89,
       "https://images.unsplash.com/photo-1676828390434-6ae9782fd194?auto=format&fit=crop&w=1200&q=85",
-      0,
-      JSON.stringify(["Lake nearby", "Corner plot"]),
-      "Residential site near water body. Development sample listing for local testing.",
+      1,
+      JSON.stringify(["Lake Proximity", "Corner Plot", "North-facing"]),
+      "Tranquil residential site located walking distance from Yelahanka lake park with clear survey and subdivision FMB boundaries verified.",
       "Active",
       "Development sample — not a live listing",
     ],
     [
       0,
-      "Orchard County",
+      "Aeroville County",
       "Devanahalli, Bengaluru",
-      6800000,
+      5400000,
       1500,
       "Plot",
-      86,
+      87,
       "https://images.unsplash.com/photo-1523192159590-edbd468b9518?auto=format&fit=crop&w=1200&q=85",
-      0,
-      JSON.stringify(["Airport 15 min", "30 ft road"]),
-      "Plot near airport corridor. Development sample listing for local testing.",
+      1,
+      JSON.stringify(["Airport 15 min", "30 ft road", "High ROI"]),
+      "High-growth investment plot near the international airport corridor with rapid civic infrastructure development and clear agricultural conversion.",
       "Active",
       "Development sample — not a live listing",
     ],
