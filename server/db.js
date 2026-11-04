@@ -90,7 +90,7 @@ try {
             return { lastInsertRowid: id, changes: ch };
           } catch (e) {
             console.error("SQL.js run error:", e.message, "SQL:", sql);
-            return { lastInsertRowid: 0, changes: 0 };
+            throw e;
           }
         }
       };

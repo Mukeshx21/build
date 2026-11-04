@@ -11,7 +11,7 @@ import {
 
 const router = Router();
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const ALLOWED_ROLES = new Set(["buyer", "seller"]);
+const ALLOWED_ROLES = new Set(["buyer", "seller", "agent", "investor", "broker"]);
 
 router.get("/status", (_req, res) => {
   return res.json({
@@ -53,10 +53,10 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    const cleanRole = String(role || "").toLowerCase();
+    const cleanRole = String(role || "buyer").trim().toLowerCase();
     if (!ALLOWED_ROLES.has(cleanRole)) {
       return res.status(400).json({
-        error: "Please select an account type: Buyer or Seller.",
+        error: "Please select a valid account type: Buyer or Seller.",
       });
     }
 
@@ -79,6 +79,34 @@ router.post("/register", async (req, res) => {
       });
     }
 
+    // Map extended roles to valid database role constraint (buyer | seller)
+    const dbRole = (cleanRole === "seller" || cleanRole === "agent" || cleanRole === "broker") ? "seller" : "buyer";
+
+    // Normalize buyer & seller preferences
+    let normalizedPreferences = {};
+    if (preferences && typeof preferences === "object") {
+      const loc = String(preferences.location || preferences.preferred_location || preferences.city || "").trim();
+      const propType = String(preferences.type || preferences.property_type || "Plot").trim();
+      const budget = Number(String(preferences.maxBudget || preferences.max_budget || 0).replace(/[^0-9.]/g, "")) || 0;
+      const area = Number(String(preferences.minArea || preferences.min_land_area || 0).replace(/[^0-9.]/g, "")) || 0;
+
+      normalizedPreferences = {
+        location: loc,
+        preferred_location: loc,
+        type: propType,
+        property_type: propType,
+        maxBudget: budget,
+        max_budget: budget,
+        minArea: area,
+        min_land_area: area,
+        propertyLocation: String(preferences.propertyLocation || preferences.property_location || "").trim(),
+        listingTiming: String(preferences.listingTiming || preferences.listing_timing || "now").trim(),
+        ownershipType: String(preferences.ownershipType || preferences.ownership_type || "direct_owner").trim(),
+        role: cleanRole,
+        ...preferences,
+      };
+    }
+
     // Secure password hashing with bcryptjs (salt rounds = 10)
     const passwordHash = await bcrypt.hash(password, 10);
 
@@ -91,11 +119,15 @@ router.post("/register", async (req, res) => {
       name.trim(),
       cleanEmail,
       passwordHash,
-      cleanRole,
+      dbRole,
       typeof phone === "string" ? phone.trim().slice(0, 32) : "",
-      preferences && typeof preferences === "object" ? JSON.stringify(preferences) : "{}",
+      JSON.stringify(normalizedPreferences),
     );
-    const userId = Number(result.lastInsertRowid);
+
+    const userId = Number(result?.lastInsertRowid);
+    if (!userId || userId <= 0) {
+      throw new Error("Database insertion did not return a valid user ID.");
+    }
 
     const user = {
       id: userId,
@@ -103,7 +135,7 @@ router.post("/register", async (req, res) => {
       email: cleanEmail,
       role: cleanRole,
       phone: typeof phone === "string" ? phone.trim().slice(0, 32) : "",
-      preferences: preferences && typeof preferences === "object" ? preferences : {},
+      preferences: normalizedPreferences,
     };
 
     const token = signToken({
@@ -123,8 +155,13 @@ router.post("/register", async (req, res) => {
     });
   } catch (err) {
     console.error("Registration error:", err);
+    if (err.message && (err.message.includes("UNIQUE constraint") || err.code === "SQLITE_CONSTRAINT")) {
+      return res.status(409).json({
+        error: "An account with this email address already exists. Please sign in instead.",
+      });
+    }
     return res.status(500).json({
-      error: "Unable to complete registration. Please try again.",
+      error: err.message || "Unable to complete registration. Please try again.",
     });
   }
 });

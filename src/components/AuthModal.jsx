@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { apiRequest } from '../services/api.js';
 import {
   X,
   Eye,
@@ -28,6 +29,16 @@ export default function AuthModal({
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
+
+  // Synchronize modal mode and reset steps when opened
+  useEffect(() => {
+    if (isOpen) {
+      setMode(initialMode || 'login');
+      setStep(1);
+      setError('');
+      setSuccessMessage('');
+    }
+  }, [isOpen, initialMode]);
 
   // Registration & Login Form State
   const [form, setForm] = useState({
@@ -67,28 +78,21 @@ export default function AuthModal({
     setBusy(true);
 
     try {
-      const res = await fetch('/api/auth/login', {
+      const data = await apiRequest('/api/auth/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
-          email: form.email,
+          email: form.email.trim(),
           password: form.password,
         }),
       });
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to sign in. Please verify your credentials.');
-      }
-
       if (data.token) {
         localStorage.setItem('landai_token', data.token);
       }
-      onAuthenticated(data.user);
+      onAuthenticated(data.user, false);
       onClose();
     } catch (err) {
-      setError(err.message || 'Network error occurred. Please try again.');
+      setError(err.message || 'Failed to sign in. Please verify your credentials.');
     } finally {
       setBusy(false);
     }
@@ -103,7 +107,8 @@ export default function AuthModal({
         setError('Please enter your full name (at least 2 characters).');
         return;
       }
-      if (!form.email || !form.email.includes('@')) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!form.email || !emailRegex.test(form.email.trim())) {
         setError('Please enter a valid email address.');
         return;
       }
@@ -120,11 +125,31 @@ export default function AuthModal({
     }
 
     if (step === 2) {
+      if (!form.role || !['buyer', 'seller', 'agent', 'investor'].includes(form.role)) {
+        setError('Please select an account type.');
+        return;
+      }
       setStep(3);
       return;
     }
 
     if (step === 3) {
+      if (form.role === 'buyer') {
+        if (!form.buyerLocation || form.buyerLocation.trim().length < 2) {
+          setError('Please specify your preferred location or city.');
+          return;
+        }
+        const cleanBudget = Number(String(form.buyerMaxBudget).replace(/[^0-9.]/g, ''));
+        if (isNaN(cleanBudget) || cleanBudget <= 0) {
+          setError('Please specify a valid maximum budget.');
+          return;
+        }
+        const cleanArea = Number(String(form.buyerMinArea).replace(/[^0-9.]/g, ''));
+        if (isNaN(cleanArea) || cleanArea <= 0) {
+          setError('Please specify a valid minimum land area.');
+          return;
+        }
+      }
       if (!form.agreeTerms) {
         setError('You must accept the Terms of Service to create an account.');
         return;
@@ -137,29 +162,34 @@ export default function AuthModal({
     setBusy(true);
     setError('');
 
+    const cleanBudget = Number(String(form.buyerMaxBudget).replace(/[^0-9.]/g, '')) || 0;
+    const cleanArea = Number(String(form.buyerMinArea).replace(/[^0-9.]/g, '')) || 0;
+
     const preferences =
       form.role === 'buyer'
         ? {
-            location: form.buyerLocation,
-            type: form.buyerPropertyType,
-            maxBudget: Number(form.buyerMaxBudget) || 0,
-            minArea: Number(form.buyerMinArea) || 0,
+            location: form.buyerLocation.trim(),
+            preferred_location: form.buyerLocation.trim(),
+            type: form.buyerPropertyType || 'Plot',
+            property_type: form.buyerPropertyType || 'Plot',
+            maxBudget: cleanBudget,
+            max_budget: cleanBudget,
+            minArea: cleanArea,
+            min_land_area: cleanArea,
           }
         : {
-            propertyLocation: form.sellerPropertyLocation,
-            listingTiming: form.sellerTiming,
-            ownershipType: form.sellerOwnershipType,
+            propertyLocation: form.sellerPropertyLocation ? form.sellerPropertyLocation.trim() : '',
+            listingTiming: form.sellerTiming || 'now',
+            ownershipType: form.sellerOwnershipType || 'direct_owner',
           };
 
     try {
-      const res = await fetch('/api/auth/register', {
+      const data = await apiRequest('/api/auth/register', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
           name: form.name.trim(),
           email: form.email.trim(),
-          phone: form.phone.trim(),
+          phone: form.phone ? form.phone.trim() : '',
           password: form.password,
           confirmPassword: form.confirmPassword,
           role: form.role,
@@ -168,18 +198,13 @@ export default function AuthModal({
         }),
       });
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || 'Registration failed. Please try again.');
-      }
-
       if (data.token) {
         localStorage.setItem('landai_token', data.token);
       }
-      onAuthenticated(data.user);
+      onAuthenticated(data.user, true);
       onClose();
     } catch (err) {
-      setError(err.message || 'An error occurred during registration.');
+      setError(err.message || 'An unexpected error occurred during registration. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -192,12 +217,10 @@ export default function AuthModal({
     setBusy(true);
 
     try {
-      const res = await fetch('/api/auth/forgot-password', {
+      const data = await apiRequest('/api/auth/forgot-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: form.email }),
+        body: JSON.stringify({ email: form.email.trim() }),
       });
-      const data = await res.json().catch(() => ({}));
 
       if (data.reset_token) {
         setResetToken(data.reset_token);
@@ -218,29 +241,24 @@ export default function AuthModal({
     setError('');
     setSuccessMessage('');
     if (newPassword.length < 6) {
-      setError('Password must be at least 6 characters.');
+      setError('New password must be at least 6 characters long.');
       return;
     }
     if (newPassword !== confirmNewPassword) {
-      setError('Passwords do not match.');
+      setError('Passwords do not match. Please verify both fields.');
       return;
     }
-
     setBusy(true);
+
     try {
-      const res = await fetch('/api/auth/reset-password', {
+      const data = await apiRequest('/api/auth/reset-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           token: resetToken,
           password: newPassword,
           confirmPassword: confirmNewPassword,
         }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || 'Password reset failed.');
-      }
       setSuccessMessage('Password updated successfully! Please sign in with your new password.');
       setMode('login');
     } catch (err) {

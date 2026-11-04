@@ -20,26 +20,40 @@ const app = express();
 // Non-blocking warmup for OCR service on startup
 ensureOcrRunning().catch(() => {});
 
-function resolveAllowedOrigins() {
+function resolveCorsOrigin(origin, callback) {
+  // Allow requests without Origin (e.g. mobile apps, curl, server-to-server)
+  if (!origin) return callback(null, true);
+
   const raw = process.env.CORS_ORIGINS || "";
-  const list = raw
+  const allowedList = raw
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  if (list.length) return list;
-  if (process.env.NODE_ENV === "production") {
-    return [];
-  }
-  return true; // reflect request origin in development
-}
 
-const corsOrigin = resolveAllowedOrigins();
+  if (allowedList.includes(origin)) {
+    return callback(null, true);
+  }
+
+  // Allow vercel preview / production deployments and localhost
+  if (
+    /^https?:\/\/localhost(:\d+)?$/.test(origin) ||
+    /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin) ||
+    /^https?:\/\/[a-zA-Z0-9_-]+\.vercel\.app$/.test(origin)
+  ) {
+    return callback(null, true);
+  }
+
+  // If in development or no specific whitelist configured, reflect origin
+  if (process.env.NODE_ENV !== "production" || allowedList.length === 0) {
+    return callback(null, true);
+  }
+
+  return callback(new Error("CORS origin not allowed: " + origin));
+}
 
 app.use(
   cors({
-    origin: corsOrigin.length === 0 && process.env.NODE_ENV === "production"
-      ? false
-      : corsOrigin,
+    origin: resolveCorsOrigin,
     credentials: true,
   }),
 );

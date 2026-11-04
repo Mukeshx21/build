@@ -3,6 +3,7 @@ import './App.css';
 
 // Components
 import Navigation from './components/Navigation';
+import { apiUrl } from './services/api.js';
 import AuthModal from './components/AuthModal';
 import Hero from './components/Hero';
 import PropertyCard from './components/PropertyCard';
@@ -140,7 +141,7 @@ export default function App() {
     if (!token) return;
 
     try {
-      const res = await fetch('/api/auth/me', {
+      const res = await fetch(apiUrl('/api/auth/me'), {
         headers: { Authorization: `Bearer ${token}` },
         credentials: 'include',
       });
@@ -166,7 +167,7 @@ export default function App() {
 
     try {
       const token = localStorage.getItem('landai_token');
-      const res = await fetch('/api/properties?pageSize=50', {
+      const res = await fetch(apiUrl('/api/properties?pageSize=50'), {
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
@@ -199,7 +200,7 @@ export default function App() {
     }
 
     const token = localStorage.getItem('landai_token');
-    fetch('/api/saved', {
+    fetch(apiUrl('/api/saved'), {
       headers: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
@@ -235,7 +236,7 @@ export default function App() {
 
     try {
       const token = localStorage.getItem('landai_token');
-      const res = await fetch(`/api/saved/${propertyId}`, {
+      const res = await fetch(apiUrl(`/api/saved/${propertyId}`), {
         method,
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -258,7 +259,7 @@ export default function App() {
   // Handle Sign Out
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+      await fetch(apiUrl('/api/auth/logout'), { method: 'POST', credentials: 'include' });
     } catch {
       // ignore
     }
@@ -797,9 +798,14 @@ export default function App() {
         isOpen={authModalOpen}
         onClose={() => setAuthModalOpen(false)}
         initialMode={authInitialMode}
-        onAuthenticated={(authenticatedUser) => {
+        onAuthenticated={(authenticatedUser, wasRegistration = false) => {
           setUser(authenticatedUser);
           fetchProperties();
+          if (authenticatedUser?.role === 'seller') {
+            setActiveTab('seller-dashboard');
+          } else if (authenticatedUser?.role === 'buyer') {
+            setActiveTab('properties');
+          }
         }}
       />
 
