@@ -2,6 +2,13 @@
 
 A complete, production-ready web platform for digitizing land records, validating title documents, and matching properties based on buyer and seller criteria.
 
+[![Documentation](https://img.shields.io/badge/Documentation-PDF%20Architecture%20Guide-teal.svg)](pdf/LandAI_Project_Documentation.pdf)
+[![Publishing Kit](https://img.shields.io/badge/Launch%20Kit-PUBLISHING__KIT.md-blue.svg)](PUBLISHING_KIT.md)
+[![Vercel Deployment](https://img.shields.io/badge/Deployment-Vercel%20Serverless-black.svg)](vercel.json)
+
+> 📄 **System Documentation:** A comprehensive 4-page technical architectural guide is available at [pdf/LandAI_Project_Documentation.pdf](pdf/LandAI_Project_Documentation.pdf).
+> 🚀 **Publishing Kit:** Ready-to-use launch posts for LinkedIn, Twitter/X, Reddit, Show HN, and Dev.to are available in [PUBLISHING_KIT.md](PUBLISHING_KIT.md).
+
 ---
 
 ## 🌟 Key Features
