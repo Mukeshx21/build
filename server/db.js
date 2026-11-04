@@ -266,6 +266,9 @@ db.exec(`
     warning TEXT DEFAULT '',
     fields_json TEXT DEFAULT '{}',
     approved_fields_json TEXT DEFAULT '{}',
+    file_base64 TEXT DEFAULT '',
+    storage_url TEXT DEFAULT '',
+    extracted_text TEXT DEFAULT '',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -344,6 +347,18 @@ try {
   `);
 } catch (e) {
   console.warn("[Database] user_profiles migration notice:", e.message);
+}
+
+// Migrate documents columns for persistent cross-container storage
+const docColumns = db.prepare("PRAGMA table_info(documents)").all().map((c) => c.name);
+if (!docColumns.includes("file_base64")) {
+  try { db.exec("ALTER TABLE documents ADD COLUMN file_base64 TEXT DEFAULT ''"); } catch {}
+}
+if (!docColumns.includes("storage_url")) {
+  try { db.exec("ALTER TABLE documents ADD COLUMN storage_url TEXT DEFAULT ''"); } catch {}
+}
+if (!docColumns.includes("extracted_text")) {
+  try { db.exec("ALTER TABLE documents ADD COLUMN extracted_text TEXT DEFAULT ''"); } catch {}
 }
 
 const propertyColumns = db.prepare("PRAGMA table_info(properties)").all().map((c) => c.name);

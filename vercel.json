@@ -2,11 +2,19 @@
   "version": 2,
   "rewrites": [
     {
-      "source": "/api/(.*)",
+      "source": "/api/ocr",
+      "destination": "/api/ocr.py"
+    },
+    {
+      "source": "/api/ocr/:match*",
+      "destination": "/api/ocr.py"
+    },
+    {
+      "source": "/api/:match*",
       "destination": "/api/index.js"
     },
     {
-      "source": "/uploads/(.*)",
+      "source": "/uploads/:match*",
       "destination": "/api/index.js"
     },
     {

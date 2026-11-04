@@ -89,8 +89,8 @@ export default function DocumentVerification({ user, onOpenAuth }) {
       return;
     }
 
-    if (file.size > 50 * 1024 * 1024) {
-      setError('File size exceeds the 50 MB limit. Please compress or select a smaller file.');
+    if (file.size > 4.5 * 1024 * 1024) {
+      setError('File size exceeds the 4.5 MB limit for serverless processing. Please select a document under 4.5 MB, or compress the PDF/image.');
       return;
     }
 

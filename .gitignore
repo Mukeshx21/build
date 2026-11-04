@@ -24,3 +24,7 @@ server/data/*.sqlite-*
 scratch/
 /.plugins/
 /.opencode-skills/
+
+__pycache__/
+*.py[cod]
+api/__pycache__/

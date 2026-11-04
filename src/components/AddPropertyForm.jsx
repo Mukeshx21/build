@@ -238,8 +238,8 @@ export default function AddPropertyForm({
       return;
     }
 
-    if (file.size > 50 * 1024 * 1024) {
-      setGlobalError('Document exceeds 50 MB limit.');
+    if (file.size > 4.5 * 1024 * 1024) {
+      setGlobalError('Document exceeds the 4.5 MB serverless limit. Please compress or select a smaller file.');
       setUploadingDoc(false);
       return;
     }
