@@ -4,6 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "vite",
     "dev:studio": "vite",
