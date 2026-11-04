@@ -14,6 +14,10 @@ export default function PropertyCard({
   onToggleSave,
   isSaved = false
 }) {
+  const status = (property.status || 'AVAILABLE').toUpperCase();
+  const isSold = status === 'SOLD';
+  const isPending = status === 'PENDING';
+
   const formatInr = (amount) => {
     if (!amount) return '₹0';
     const num = Number(amount);
@@ -38,7 +42,10 @@ export default function PropertyCard({
   };
 
   return (
-    <article className="property-card-root" onClick={() => onSelect(property)}>
+    <article
+      className={`property-card-root ${isSold ? 'card-is-sold' : ''}`}
+      onClick={() => onSelect(property)}
+    >
       {/* Property Visual */}
       <div className="card-visual-wrapper">
         <img
@@ -50,7 +57,12 @@ export default function PropertyCard({
 
         {/* Top Badges */}
         <div className="card-top-badges">
-          <span className="property-type-pill">{property.type}</span>
+          {isSold ? (
+            <span className="property-status-badge badge-sold">SOLD</span>
+          ) : isPending ? (
+            <span className="property-status-badge badge-pending">PENDING</span>
+          ) : null}
+          <span className="property-type-pill">{property.type || property.property_type || 'Land'}</span>
           {property.score && (
             <span className="match-score-pill">
               <Sparkles size={11} />
@@ -90,6 +102,9 @@ export default function PropertyCard({
         <div className="property-location-row">
           <MapPin size={13} />
           <span>{property.location}</span>
+          {property.address && property.address !== property.location && (
+            <span className="card-address-hint">• {property.address}</span>
+          )}
         </div>
 
         {/* Spec Tags */}
@@ -104,7 +119,7 @@ export default function PropertyCard({
           </div>
           <div className="spec-dot" />
           <div className="spec-item">
-            <span>{property.type}</span>
+            <span>{property.type || property.property_type || 'Land'}</span>
           </div>
         </div>
 
@@ -121,7 +136,9 @@ export default function PropertyCard({
 
         {/* View Details Action */}
         <div className="card-footer-action">
-          <span className="action-text">View details &amp; legal checks</span>
+          <span className="action-text">
+            {isSold ? 'View sold record & details' : 'View details & legal checks'}
+          </span>
           <div className="action-arrow">
             <ArrowUpRight size={14} />
           </div>

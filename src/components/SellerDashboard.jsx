@@ -12,7 +12,11 @@ import {
   AlertCircle,
   ChevronRight,
   ArrowUpRight,
-  FileText
+  FileText,
+  Tag,
+  CheckCircle2,
+  RotateCcw,
+  Check,
 } from 'lucide-react';
 
 export default function SellerDashboard({
@@ -21,11 +25,15 @@ export default function SellerDashboard({
   onOpenMyListings,
   onSelectProperty,
   onEditProperty,
+  onListingChanged,
 }) {
   const [stats, setStats] = useState(null);
   const [recentListings, setRecentListings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [soldConfirmProperty, setSoldConfirmProperty] = useState(null);
+  const [statusUpdating, setStatusUpdating] = useState(false);
+  const [actionFeedback, setActionFeedback] = useState('');
 
   useEffect(() => {
     fetchDashboard();
@@ -52,6 +60,7 @@ export default function SellerDashboard({
   };
 
   const handleStatusChange = async (propertyId, newStatus) => {
+    setStatusUpdating(true);
     try {
       const token = localStorage.getItem('landai_token');
       const res = await fetch(`/api/properties/${propertyId}/status`, {
@@ -61,13 +70,23 @@ export default function SellerDashboard({
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         credentials: 'include',
-        body: JSON.stringify({ listing_status: newStatus }),
+        body: JSON.stringify({ status: newStatus }),
       });
       if (res.ok) {
+        setActionFeedback(
+          newStatus === 'SOLD'
+            ? 'Property marked as SOLD successfully.'
+            : `Property status set to ${newStatus}.`
+        );
+        setTimeout(() => setActionFeedback(''), 3500);
+        setSoldConfirmProperty(null);
         fetchDashboard();
+        if (onListingChanged) onListingChanged();
       }
     } catch (err) {
       console.error('Status change failed:', err);
+    } finally {
+      setStatusUpdating(false);
     }
   };
 
@@ -79,17 +98,6 @@ export default function SellerDashboard({
     return `₹${num.toLocaleString('en-IN')}`;
   };
 
-  const getStatusClass = (status) => {
-    const map = {
-      'Published': 'status-published',
-      'Draft': 'status-draft',
-      'Pending Review': 'status-pending',
-      'Unpublished': 'status-unpublished',
-      'Rejected': 'status-rejected',
-    };
-    return map[status] || 'status-draft';
-  };
-
   return (
     <div className="seller-dashboard-page animate-fade">
       {/* Header */}
@@ -97,39 +105,45 @@ export default function SellerDashboard({
         <div className="seller-header-text">
           <div className="hero-eyebrow">
             <span className="eyebrow-pill">SELLER PORTAL</span>
-            <span className="eyebrow-note">PROPERTY MANAGEMENT</span>
+            <span className="eyebrow-note">PROPERTY INVENTORY &amp; TELEMETRY</span>
           </div>
-          <h1>Welcome back, {user?.name?.split(' ')[0] || 'Seller'}</h1>
+          <h1>Seller Overview &amp; Control Center</h1>
           <p className="seller-header-sub">
-            Manage your property listings, track visibility, and connect with buyers.
+            Track performance, update parcel availability status, and manage real-time marketplace listings.
           </p>
         </div>
-        <button
-          className="seller-cta-btn"
-          onClick={onOpenAddProperty}
-          id="seller-add-property-btn"
-        >
-          <PlusCircle size={16} />
-          <span>Add New Property</span>
-        </button>
+        <div className="seller-header-badge">
+          <Building2 size={16} />
+          <span>Seller Account</span>
+        </div>
       </div>
 
+      {actionFeedback && (
+        <div className="seller-feedback-banner">
+          <CheckCircle2 size={16} />
+          <span>{actionFeedback}</span>
+        </div>
+      )}
+
+      {/* Loading & Error */}
       {loading ? (
         <div className="seller-loading-state">
           <RefreshCw size={24} className="spin-icon" />
-          <span>Loading your dashboard…</span>
+          <span>Loading dashboard insights…</span>
         </div>
       ) : error ? (
         <div className="seller-error-state">
           <AlertCircle size={20} />
           <span>{error}</span>
-          <button onClick={fetchDashboard} className="seller-retry-btn">Retry</button>
+          <button onClick={fetchDashboard} className="seller-retry-btn">
+            Retry
+          </button>
         </div>
       ) : (
         <>
           {/* Stats Grid */}
           <div className="seller-stats-grid">
-            <div className="seller-stat-card" id="stat-total">
+            <div className="seller-stat-card">
               <div className="stat-icon-wrap">
                 <Building2 size={18} />
               </div>
@@ -138,31 +152,34 @@ export default function SellerDashboard({
                 <span className="stat-label">Total Listings</span>
               </div>
             </div>
-            <div className="seller-stat-card" id="stat-published">
-              <div className="stat-icon-wrap">
-                <Globe size={18} />
+
+            <div className="seller-stat-card">
+              <div className="stat-icon-wrap" style={{ background: '#ECFDF5', color: '#047857' }}>
+                <Check size={18} />
               </div>
               <div className="stat-details">
-                <span className="stat-number">{stats?.published ?? 0}</span>
-                <span className="stat-label">Published</span>
+                <span className="stat-number">{stats?.available ?? 0}</span>
+                <span className="stat-label">Available for Sale</span>
               </div>
             </div>
-            <div className="seller-stat-card" id="stat-draft">
-              <div className="stat-icon-wrap">
-                <FileText size={18} />
+
+            <div className="seller-stat-card">
+              <div className="stat-icon-wrap" style={{ background: '#FEE2E2', color: '#B91C1C' }}>
+                <Tag size={18} />
               </div>
               <div className="stat-details">
-                <span className="stat-number">{stats?.draft ?? 0}</span>
-                <span className="stat-label">Drafts</span>
+                <span className="stat-number">{stats?.sold ?? 0}</span>
+                <span className="stat-label">Sold Properties</span>
               </div>
             </div>
-            <div className="seller-stat-card" id="stat-pending">
-              <div className="stat-icon-wrap">
+
+            <div className="seller-stat-card">
+              <div className="stat-icon-wrap" style={{ background: '#FEF3C7', color: '#B45309' }}>
                 <Eye size={18} />
               </div>
               <div className="stat-details">
-                <span className="stat-number">{stats?.pending_review ?? 0}</span>
-                <span className="stat-label">Pending Review</span>
+                <span className="stat-number">{stats?.pending_sale ?? 0}</span>
+                <span className="stat-label">Pending Sales</span>
               </div>
             </div>
           </div>
@@ -183,14 +200,14 @@ export default function SellerDashboard({
               id="action-manage-listings"
             >
               <LayoutDashboard size={15} />
-              <span>Manage All Listings</span>
+              <span>Manage All Inventory</span>
             </button>
           </div>
 
-          {/* Recent Listings */}
+          {/* Recent Listings Table */}
           <div className="seller-recent-section">
             <div className="seller-section-header">
-              <h2>Recent Listings</h2>
+              <h2>Recent Listings &amp; Status Management</h2>
               <button className="seller-view-all-btn" onClick={onOpenMyListings}>
                 View All <ChevronRight size={13} />
               </button>
@@ -203,11 +220,7 @@ export default function SellerDashboard({
                 </div>
                 <h3>No listings yet</h3>
                 <p>You haven't listed any properties. Add your first property to get started.</p>
-                <button
-                  className="seller-cta-btn"
-                  onClick={onOpenAddProperty}
-                  id="empty-add-property-btn"
-                >
+                <button className="seller-cta-btn" onClick={onOpenAddProperty}>
                   <PlusCircle size={15} />
                   <span>Add Your First Property</span>
                 </button>
@@ -217,67 +230,122 @@ export default function SellerDashboard({
                 <div className="seller-table-header">
                   <span>Property</span>
                   <span>Price</span>
-                  <span>Status</span>
+                  <span>Availability</span>
                   <span>Actions</span>
                 </div>
-                {recentListings.map((listing) => (
-                  <div key={listing.id} className="seller-table-row">
-                    <div className="seller-listing-info">
-                      <div className="seller-listing-thumb">
-                        <img src={listing.image} alt={listing.title} />
+                {recentListings.map((listing) => {
+                  const isSold = listing.status === 'SOLD';
+                  const isPending = listing.status === 'PENDING';
+
+                  return (
+                    <div key={listing.id} className="seller-table-row">
+                      <div className="seller-listing-info">
+                        <div className="seller-listing-thumb">
+                          <img src={listing.image} alt={listing.title} />
+                        </div>
+                        <div>
+                          <strong>{listing.title}</strong>
+                          <span>{listing.address || listing.location}</span>
+                        </div>
                       </div>
+                      <div className="seller-listing-price">{formatInr(listing.price)}</div>
                       <div>
-                        <strong>{listing.title}</strong>
-                        <span>{listing.location}</span>
+                        {isSold ? (
+                          <span className="mlc-status-badge status-sold-pill">SOLD</span>
+                        ) : isPending ? (
+                          <span className="mlc-status-badge status-pending-pill">PENDING</span>
+                        ) : (
+                          <span className="mlc-status-badge status-available-pill">AVAILABLE</span>
+                        )}
+                      </div>
+                      <div className="seller-listing-actions">
+                        <button
+                          className="seller-icon-btn"
+                          onClick={() => onSelectProperty && onSelectProperty(listing)}
+                          title="Preview listing"
+                        >
+                          <Eye size={14} />
+                        </button>
+                        {!listing.is_sample && (
+                          <button
+                            className="seller-icon-btn"
+                            onClick={() => onEditProperty && onEditProperty(listing)}
+                            title="Edit listing"
+                          >
+                            <Edit2 size={14} />
+                          </button>
+                        )}
+                        {!listing.is_sample && (
+                          <>
+                            {!isSold ? (
+                              <button
+                                className="seller-icon-btn"
+                                style={{ color: '#DC2626' }}
+                                onClick={() => setSoldConfirmProperty(listing)}
+                                title="Mark as SOLD"
+                              >
+                                <Tag size={14} />
+                              </button>
+                            ) : (
+                              <button
+                                className="seller-icon-btn"
+                                style={{ color: '#059669' }}
+                                onClick={() => handleStatusChange(listing.id, 'AVAILABLE')}
+                                title="Mark as AVAILABLE"
+                              >
+                                <RotateCcw size={14} />
+                              </button>
+                            )}
+                          </>
+                        )}
                       </div>
                     </div>
-                    <div className="seller-listing-price">{formatInr(listing.price)}</div>
-                    <div>
-                      <span className={`seller-status-badge ${getStatusClass(listing.listing_status)}`}>
-                        {listing.listing_status || 'Published'}
-                      </span>
-                    </div>
-                    <div className="seller-listing-actions">
-                      <button
-                        className="seller-icon-btn"
-                        onClick={() => onSelectProperty && onSelectProperty(listing)}
-                        title="Preview listing"
-                      >
-                        <Eye size={14} />
-                      </button>
-                      {!listing.is_sample && (
-                        <button
-                          className="seller-icon-btn"
-                          onClick={() => onEditProperty && onEditProperty(listing)}
-                          title="Edit listing"
-                        >
-                          <Edit2 size={14} />
-                        </button>
-                      )}
-                      {listing.listing_status === 'Published' ? (
-                        <button
-                          className="seller-icon-btn"
-                          onClick={() => handleStatusChange(listing.id, 'Unpublished')}
-                          title="Unpublish listing"
-                        >
-                          <EyeOff size={14} />
-                        </button>
-                      ) : listing.listing_status === 'Draft' || listing.listing_status === 'Unpublished' ? (
-                        <button
-                          className="seller-icon-btn"
-                          onClick={() => handleStatusChange(listing.id, 'Published')}
-                          title="Publish listing"
-                        >
-                          <Globe size={14} />
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
         </>
+      )}
+
+      {/* Confirmation Dialog: Mark as Sold */}
+      {soldConfirmProperty && (
+        <div className="delete-confirm-overlay" role="dialog" aria-modal="true">
+          <div className="delete-confirm-dialog">
+            <div
+              className="delete-confirm-icon"
+              style={{ background: '#FEE2E2', color: '#DC2626' }}
+            >
+              <Tag size={24} />
+            </div>
+            <h3>Mark Property as SOLD?</h3>
+            <p>
+              Are you sure you want to mark{' '}
+              <strong>"{soldConfirmProperty.title}"</strong> as <strong>SOLD</strong>?
+              <br />
+              <br />
+              This updates the property status to SOLD in the database and removes it from active
+              buyer searches.
+            </p>
+            <div className="delete-confirm-actions">
+              <button
+                className="delete-cancel-btn"
+                onClick={() => setSoldConfirmProperty(null)}
+                disabled={statusUpdating}
+              >
+                Cancel
+              </button>
+              <button
+                className="delete-confirm-btn"
+                style={{ background: '#111111', color: '#FFFFFF' }}
+                onClick={() => handleStatusChange(soldConfirmProperty.id, 'SOLD')}
+                disabled={statusUpdating}
+              >
+                {statusUpdating ? 'Updating…' : 'Yes, Confirm SOLD'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

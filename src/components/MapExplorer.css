@@ -692,3 +692,354 @@
     font-size: 10px;
   }
 }
+
+
+/* ------------------------------------------------------------------------------
+   6. PROPERTY STATUS SYSTEM & MAP FILTERING BAR
+   ------------------------------------------------------------------------------ */
+
+/* Map Filter Bar above the Map */
+.map-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--color-white, #FFFFFF);
+  border: 1px solid var(--color-border, #E6E6E6);
+  border-radius: var(--radius-md, 12px);
+  padding: 12px 18px;
+  margin-bottom: 18px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.map-filter-group-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.map-filter-group-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.map-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.map-filter-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #666666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.map-filter-select {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #111111;
+  background: #F8F8F8;
+  border: 1px solid #E2E2E2;
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.map-filter-select:hover, .map-filter-select:focus {
+  background: #FFFFFF;
+  border-color: #111111;
+}
+
+.status-filter-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #F4F4F4;
+  padding: 3px;
+  border-radius: 8px;
+}
+
+.status-pill-btn {
+  padding: 5px 11px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #666666;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-pill-btn:hover {
+  color: #111111;
+}
+
+.status-pill-btn.active {
+  background: #111111;
+  color: #FFFFFF;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.status-pill-btn.active.sold-pill {
+  background: #DC2626;
+  color: #FFFFFF;
+}
+
+.status-pill-btn.active.pending-pill {
+  background: #D97706;
+  color: #FFFFFF;
+}
+
+.reset-filters-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #777777;
+  background: transparent;
+  border: 1px dashed #D0D0D0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.reset-filters-btn:hover {
+  color: #111111;
+  border-color: #111111;
+  background: #F7F7F7;
+}
+
+/* Sold and Pending Property Markers */
+.leaflet-property-pin.sold {
+  background: #1E1E1E !important;
+  border-color: #DC2626 !important;
+  color: #E5E5E5 !important;
+}
+
+.leaflet-property-pin.sold:hover, .leaflet-property-pin.sold.selected {
+  border-color: #EF4444 !important;
+  box-shadow: 0 8px 24px rgba(220, 38, 38, 0.45) !important;
+}
+
+.sold-badge {
+  background: #DC2626;
+  color: #FFFFFF;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.leaflet-property-pin.pending {
+  background: #1A1813 !important;
+  border-color: #D97706 !important;
+}
+
+.pending-badge {
+  background: #D97706;
+  color: #FFFFFF;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+/* Enhanced Property Popup Styling */
+.map-popup-thumb-wrap {
+  position: relative;
+  width: 100%;
+  height: 120px;
+  overflow: hidden;
+}
+
+.popup-status-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.popup-status-badge.status-available {
+  background: #059669;
+  color: #FFFFFF;
+}
+
+.popup-status-badge.status-sold {
+  background: #DC2626;
+  color: #FFFFFF;
+}
+
+.popup-status-badge.status-pending {
+  background: #D97706;
+  color: #FFFFFF;
+}
+
+.map-popup-type-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: #2563EB;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+
+.map-popup-address {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: 11px;
+  color: #666666;
+  margin-bottom: 6px;
+  line-height: 1.3;
+}
+
+.map-popup-address svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.map-popup-specs-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #444444;
+  margin-bottom: 6px;
+}
+
+.map-popup-seller-info {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #666666;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed #E5E5E5;
+}
+
+.map-popup-avail-tag {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.map-popup-avail-tag.sold {
+  color: #DC2626;
+}
+
+.map-popup-avail-tag.available {
+  color: #059669;
+}
+
+/* Side Rail Card Badges */
+.rail-status-pill {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-left: 6px;
+}
+
+.rail-status-pill.sold {
+  background: #FEE2E2;
+  color: #DC2626;
+  border: 1px solid #FECACA;
+}
+
+.rail-status-pill.pending {
+  background: #FEF3C7;
+  color: #B45309;
+  border: 1px solid #FDE68A;
+}
+
+.rail-status-pill.available {
+  background: #ECFDF5;
+  color: #047857;
+  border: 1px solid #A7F3D0;
+}
+
+/* Seller My Listings Badges & Confirmation Dialogs */
+.status-sold-pill {
+  background: #DC2626 !important;
+  color: #FFFFFF !important;
+  font-weight: 800 !important;
+}
+
+.status-pending-pill {
+  background: #D97706 !important;
+  color: #FFFFFF !important;
+  font-weight: 800 !important;
+}
+
+.status-available-pill {
+  background: #047857 !important;
+  color: #FFFFFF !important;
+  font-weight: 800 !important;
+}
+
+.status-draft-pill {
+  background: #4B5563 !important;
+  color: #FFFFFF !important;
+}
+
+.sold-action-btn {
+  background: #FEE2E2 !important;
+  color: #DC2626 !important;
+  border-color: #FECACA !important;
+}
+
+.sold-action-btn:hover {
+  background: #DC2626 !important;
+  color: #FFFFFF !important;
+}
+
+.available-action-btn {
+  background: #ECFDF5 !important;
+  color: #047857 !important;
+  border-color: #A7F3D0 !important;
+}
+
+.available-action-btn:hover {
+  background: #047857 !important;
+  color: #FFFFFF !important;
+}
+
+.mlc-sold-info-note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #DC2626;
+  margin: 4px 0;
+  padding: 3px 6px;
+  background: #FEE2E2;
+  border-radius: 4px;
+}

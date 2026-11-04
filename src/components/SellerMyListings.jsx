@@ -14,10 +14,21 @@ import {
   ArrowUpDown,
   Building2,
   MapPin,
-  Maximize2
+  Maximize2,
+  CheckCircle2,
+  Tag,
+  RotateCcw,
+  Clock,
 } from 'lucide-react';
 
-const STATUS_OPTIONS = ['', 'Draft', 'Published', 'Unpublished', 'Pending Review', 'Rejected'];
+const STATUS_FILTER_OPTIONS = [
+  { value: '', label: 'All Statuses' },
+  { value: 'AVAILABLE', label: 'Available (Active)' },
+  { value: 'SOLD', label: 'Sold' },
+  { value: 'PENDING', label: 'Pending Sale' },
+  { value: 'DRAFT', label: 'Draft' },
+];
+
 const SORT_OPTIONS = [
   { value: 'newest', label: 'Newest First' },
   { value: 'updated', label: 'Recently Updated' },
@@ -25,23 +36,24 @@ const SORT_OPTIONS = [
   { value: 'price_desc', label: 'Price: High to Low' },
 ];
 
-const STATUS_LABELS = {
-  Published: { cls: 'status-published', label: 'Published' },
-  Draft: { cls: 'status-draft', label: 'Draft' },
-  'Pending Review': { cls: 'status-pending', label: 'Pending Review' },
-  Unpublished: { cls: 'status-unpublished', label: 'Unpublished' },
-  Rejected: { cls: 'status-rejected', label: 'Rejected' },
-};
-
-export default function SellerMyListings({ user, onSelectProperty, onEditProperty }) {
+export default function SellerMyListings({
+  user,
+  onSelectProperty,
+  onEditProperty,
+  onListingChanged,
+}) {
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [sort, setSort] = useState('newest');
+  
+  // Modals state
   const [deleteId, setDeleteId] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [soldConfirmProperty, setSoldConfirmProperty] = useState(null);
+  const [statusUpdating, setStatusUpdating] = useState(false);
   const [actionFeedback, setActionFeedback] = useState('');
 
   useEffect(() => {
@@ -55,7 +67,7 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
       const token = localStorage.getItem('landai_token');
       const params = new URLSearchParams({ sort });
       if (query.trim()) params.set('q', query.trim());
-      if (statusFilter) params.set('listing_status', statusFilter);
+      if (statusFilter) params.set('status', statusFilter);
 
       const res = await fetch(`/api/seller/listings?${params}`, {
         headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -71,7 +83,9 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
     }
   };
 
-  const handleStatusChange = async (propertyId, newStatus) => {
+  // Change property market status: AVAILABLE | SOLD | PENDING | DRAFT
+  const handlePropertyStatus = async (propertyId, newStatus) => {
+    setStatusUpdating(true);
     try {
       const token = localStorage.getItem('landai_token');
       const res = await fetch(`/api/properties/${propertyId}/status`, {
@@ -81,17 +95,32 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         credentials: 'include',
-        body: JSON.stringify({ listing_status: newStatus }),
+        body: JSON.stringify({ status: newStatus }),
       });
-      if (!res.ok) throw new Error('Could not update status');
-      setActionFeedback(`Listing status changed to ${newStatus}.`);
-      setTimeout(() => setActionFeedback(''), 3000);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not update property status');
+
+      setActionFeedback(
+        newStatus === 'SOLD'
+          ? 'Property successfully marked as SOLD. It has been archived from active buyer search.'
+          : `Property status updated to ${newStatus}.`
+      );
+      setTimeout(() => setActionFeedback(''), 4000);
+
+      setSoldConfirmProperty(null);
       fetchListings();
+
+      if (onListingChanged) {
+        onListingChanged();
+      }
     } catch (err) {
       setError(err.message);
+    } finally {
+      setStatusUpdating(false);
     }
   };
 
+  // Delete listing permanently
   const confirmDelete = async () => {
     if (!deleteId) return;
     setDeleting(true);
@@ -107,6 +136,10 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
       setActionFeedback('Listing deleted successfully.');
       setTimeout(() => setActionFeedback(''), 3000);
       fetchListings();
+
+      if (onListingChanged) {
+        onListingChanged();
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -124,7 +157,11 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
 
   const formatDate = (dt) => {
     if (!dt) return '';
-    return new Date(dt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    return new Date(dt).toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
   };
 
   return (
@@ -134,20 +171,23 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
         <div className="seller-header-text">
           <div className="hero-eyebrow">
             <span className="eyebrow-pill">SELLER PORTAL</span>
-            <span className="eyebrow-note">MY LISTINGS</span>
+            <span className="eyebrow-note">PROPERTY INVENTORY &amp; SALES</span>
           </div>
           <h1>My Property Listings</h1>
           <p className="seller-header-sub">
-            Search, filter, and manage all your property listings. Only Published listings appear in the public marketplace.
+            Manage your land parcels, update availability, mark properties as SOLD, and track buyer interest.
           </p>
         </div>
       </div>
 
-      {/* Feedback Banner */}
+      {/* Action Feedback Banner */}
       {actionFeedback && (
         <div className="seller-feedback-banner">
+          <CheckCircle2 size={16} />
           <span>{actionFeedback}</span>
-          <button onClick={() => setActionFeedback('')}><X size={13} /></button>
+          <button onClick={() => setActionFeedback('')}>
+            <X size={13} />
+          </button>
         </div>
       )}
 
@@ -160,7 +200,7 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by title or location…"
+            placeholder="Search by title, address, or corridor…"
           />
         </div>
 
@@ -171,8 +211,10 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
           >
-            {STATUS_OPTIONS.map((s) => (
-              <option key={s} value={s}>{s || 'All Statuses'}</option>
+            {STATUS_FILTER_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
             ))}
           </select>
         </div>
@@ -185,7 +227,9 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
             onChange={(e) => setSort(e.target.value)}
           >
             {SORT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
             ))}
           </select>
         </div>
@@ -196,7 +240,15 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
         <div className="seller-error-state">
           <AlertCircle size={16} />
           <span>{error}</span>
-          <button onClick={() => { setError(''); fetchListings(); }} className="seller-retry-btn">Retry</button>
+          <button
+            onClick={() => {
+              setError('');
+              fetchListings();
+            }}
+            className="seller-retry-btn"
+          >
+            Retry
+          </button>
         </div>
       )}
 
@@ -212,24 +264,43 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
             <Building2 size={32} />
           </div>
           <h3>No listings found</h3>
-          <p>{statusFilter || query ? 'Try adjusting your search or filter.' : "You haven't listed any properties yet."}</p>
+          <p>
+            {statusFilter || query
+              ? 'Try adjusting your search or filter.'
+              : "You haven't listed any properties yet."}
+          </p>
         </div>
       ) : (
         <div className="my-listings-grid">
           {listings.map((listing) => {
-            const statusInfo = STATUS_LABELS[listing.listing_status] || { cls: 'status-draft', label: listing.listing_status || 'Unknown' };
+            const isSold = listing.status === 'SOLD';
+            const isPending = listing.status === 'PENDING';
+            const isDraft = listing.status === 'DRAFT' || listing.listing_status === 'Draft';
+
             return (
-              <div key={listing.id} className="my-listing-card">
+              <div
+                key={listing.id}
+                className={`my-listing-card ${isSold ? 'listing-is-sold' : ''}`}
+              >
                 <div className="mlc-image-wrap">
                   <img src={listing.image} alt={listing.title} />
-                  <span className={`mlc-status-badge ${statusInfo.cls}`}>{statusInfo.label}</span>
+                  {/* Distinct Status Badges */}
+                  {isSold ? (
+                    <span className="mlc-status-badge status-sold-pill">SOLD</span>
+                  ) : isPending ? (
+                    <span className="mlc-status-badge status-pending-pill">PENDING SALE</span>
+                  ) : isDraft ? (
+                    <span className="mlc-status-badge status-draft-pill">DRAFT</span>
+                  ) : (
+                    <span className="mlc-status-badge status-available-pill">AVAILABLE</span>
+                  )}
                 </div>
                 <div className="mlc-body">
                   <span className="mlc-type">{listing.type}</span>
                   <h3 className="mlc-title">{listing.title}</h3>
                   <div className="mlc-location">
                     <MapPin size={12} />
-                    <span>{listing.location}</span>
+                    <span>{listing.address || listing.location}</span>
                   </div>
                   <div className="mlc-meta">
                     <span className="mlc-price">{formatInr(listing.price)}</span>
@@ -238,22 +309,35 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
                       {listing.area} {listing.area_unit || 'sq.ft'}
                     </span>
                   </div>
+
+                  {isSold && listing.sold_at && (
+                    <div className="mlc-sold-info-note">
+                      <CheckCircle2 size={12} />
+                      <span>Sold on {formatDate(listing.sold_at)}</span>
+                    </div>
+                  )}
+
                   {listing.is_sample && (
                     <div className="mlc-sample-label">Development sample listing</div>
                   )}
-                  <div className="mlc-date">Updated {formatDate(listing.updated_at || listing.created_at)}</div>
+                  <div className="mlc-date">
+                    Updated {formatDate(listing.updated_at || listing.created_at)}
+                  </div>
 
+                  {/* Actions Bar */}
                   <div className="mlc-actions">
+                    {/* Preview */}
                     <button
                       className="mlc-action-btn"
                       onClick={() => onSelectProperty && onSelectProperty(listing)}
-                      title="Preview"
+                      title="Preview Listing"
                       id={`preview-listing-${listing.id}`}
                     >
                       <Eye size={13} />
-                      <span>Preview</span>
+                      <span>View</span>
                     </button>
 
+                    {/* Edit */}
                     {!listing.is_sample && (
                       <button
                         className="mlc-action-btn edit-action"
@@ -268,42 +352,52 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
 
                     {!listing.is_sample && (
                       <>
-                        {listing.listing_status !== 'Published' && (
+                        {/* MARK AS SOLD Button */}
+                        {!isSold ? (
                           <button
-                            className="mlc-action-btn primary"
-                            onClick={() => handleStatusChange(listing.id, 'Published')}
-                            title="Publish"
-                            id={`publish-listing-${listing.id}`}
+                            className="mlc-action-btn sold-action-btn"
+                            onClick={() => setSoldConfirmProperty(listing)}
+                            title="Mark property as SOLD"
+                            id={`mark-sold-${listing.id}`}
                           >
-                            <Globe size={13} />
-                            <span>Publish</span>
+                            <Tag size={13} />
+                            <span>Mark Sold</span>
+                          </button>
+                        ) : (
+                          /* REVERSE TO AVAILABLE */
+                          <button
+                            className="mlc-action-btn available-action-btn"
+                            onClick={() => handlePropertyStatus(listing.id, 'AVAILABLE')}
+                            title="Restore property as Available"
+                            id={`mark-available-${listing.id}`}
+                          >
+                            <RotateCcw size={13} />
+                            <span>Mark Available</span>
                           </button>
                         )}
-                        {listing.listing_status === 'Published' && (
+
+                        {/* MARK AS PENDING Toggle */}
+                        {!isSold && (
                           <button
-                            className="mlc-action-btn"
-                            onClick={() => handleStatusChange(listing.id, 'Unpublished')}
-                            title="Unpublish"
-                            id={`unpublish-listing-${listing.id}`}
+                            className={`mlc-action-btn ${isPending ? 'active-pending' : ''}`}
+                            onClick={() =>
+                              handlePropertyStatus(
+                                listing.id,
+                                isPending ? 'AVAILABLE' : 'PENDING'
+                              )
+                            }
+                            title={isPending ? 'Set back to Available' : 'Mark sale in progress'}
                           >
-                            <EyeOff size={13} />
-                            <span>Unpublish</span>
+                            <Clock size={13} />
+                            <span>{isPending ? 'Available' : 'Pending'}</span>
                           </button>
                         )}
-                        {listing.listing_status === 'Published' || listing.listing_status === 'Unpublished' ? null : null}
-                        <button
-                          className="mlc-action-btn draft-action"
-                          onClick={() => handleStatusChange(listing.id, 'Draft')}
-                          title="Move to Draft"
-                          id={`draft-listing-${listing.id}`}
-                        >
-                          <FileText size={13} />
-                          <span>Draft</span>
-                        </button>
+
+                        {/* DELETE */}
                         <button
                           className="mlc-action-btn danger"
                           onClick={() => setDeleteId(listing.id)}
-                          title="Delete"
+                          title="Delete Listing"
                           id={`delete-listing-${listing.id}`}
                         >
                           <Trash2 size={13} />
@@ -319,7 +413,47 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
         </div>
       )}
 
-      {/* Delete Confirmation Dialog */}
+      {/* Confirmation Dialog: Mark as Sold */}
+      {soldConfirmProperty && (
+        <div className="delete-confirm-overlay" role="dialog" aria-modal="true">
+          <div className="delete-confirm-dialog">
+            <div
+              className="delete-confirm-icon"
+              style={{ background: '#FEE2E2', color: '#DC2626' }}
+            >
+              <Tag size={24} />
+            </div>
+            <h3>Mark Property as SOLD?</h3>
+            <p>
+              Are you sure you want to mark{' '}
+              <strong>"{soldConfirmProperty.title}"</strong> as <strong>SOLD</strong>?
+              <br />
+              <br />
+              This will record the transaction, update the property marker to SOLD, and remove
+              it from active buyer searches. Existing records will be securely preserved.
+            </p>
+            <div className="delete-confirm-actions">
+              <button
+                className="delete-cancel-btn"
+                onClick={() => setSoldConfirmProperty(null)}
+                disabled={statusUpdating}
+              >
+                Cancel
+              </button>
+              <button
+                className="delete-confirm-btn"
+                style={{ background: '#111111', color: '#FFFFFF' }}
+                onClick={() => handlePropertyStatus(soldConfirmProperty.id, 'SOLD')}
+                disabled={statusUpdating}
+              >
+                {statusUpdating ? 'Updating…' : 'Yes, Confirm SOLD'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog: Delete */}
       {deleteId && (
         <div className="delete-confirm-overlay" role="dialog" aria-modal="true">
           <div className="delete-confirm-dialog">
@@ -327,7 +461,10 @@ export default function SellerMyListings({ user, onSelectProperty, onEditPropert
               <Trash2 size={24} />
             </div>
             <h3>Delete Listing?</h3>
-            <p>This action cannot be undone. The listing will be permanently removed from the marketplace.</p>
+            <p>
+              This action cannot be undone. The listing will be permanently removed from the
+              marketplace.
+            </p>
             <div className="delete-confirm-actions">
               <button
                 className="delete-cancel-btn"

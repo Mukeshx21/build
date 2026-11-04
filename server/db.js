@@ -288,15 +288,34 @@ const propColMigrations = {
   road_access: "ALTER TABLE properties ADD COLUMN road_access TEXT DEFAULT ''",
   bedrooms: "ALTER TABLE properties ADD COLUMN bedrooms INTEGER DEFAULT 0",
   bathrooms: "ALTER TABLE properties ADD COLUMN bathrooms INTEGER DEFAULT 0",
+  latitude: "ALTER TABLE properties ADD COLUMN latitude REAL DEFAULT NULL",
+  longitude: "ALTER TABLE properties ADD COLUMN longitude REAL DEFAULT NULL",
+  address: "ALTER TABLE properties ADD COLUMN address TEXT DEFAULT ''",
+  sold_at: "ALTER TABLE properties ADD COLUMN sold_at DATETIME DEFAULT NULL",
 };
 for (const [col, sql] of Object.entries(propColMigrations)) {
   if (!propertyColumns.includes(col)) {
     try { db.exec(sql); } catch { /* ignore */ }
   }
 }
-// Back-fill listing_status for existing published records
+// Back-fill listing_status and standardize status and coordinates
 try {
   db.exec(`UPDATE properties SET listing_status = 'Published' WHERE listing_status IS NULL OR listing_status = ''`);
+  db.exec(`UPDATE properties SET status = 'AVAILABLE' WHERE status = 'Active' OR status = 'available' OR status IS NULL OR status = ''`);
+  
+  db.exec(`UPDATE properties SET latitude = 11.1396, longitude = 77.0392, address = 'Survey No. 42/1B, Kovilpalayam, Coimbatore, Tamil Nadu' WHERE location LIKE '%Kovilpalayam%' AND latitude IS NULL`);
+  db.exec(`UPDATE properties SET latitude = 11.0264, longitude = 77.1245, address = 'Plot 18, Arterial Road, Sulur, Coimbatore, Tamil Nadu' WHERE location LIKE '%Sulur%' AND latitude IS NULL`);
+  db.exec(`UPDATE properties SET latitude = 12.9698, longitude = 77.7500, address = 'Site 24, ITPL Main Road, Whitefield, Bengaluru, Karnataka' WHERE location LIKE '%Whitefield%' AND latitude IS NULL`);
+  db.exec(`UPDATE properties SET latitude = 12.8601, longitude = 77.7865, address = 'Survey 104, Sarjapur Main Road, Bengaluru, Karnataka' WHERE location LIKE '%Sarjapur%' AND latitude IS NULL`);
+  db.exec(`UPDATE properties SET latitude = 12.8876, longitude = 80.2458, address = 'Sea View Enclave, Injambakkam, ECR, Chennai, Tamil Nadu' WHERE location LIKE '%Injambakkam%' AND latitude IS NULL`);
+  db.exec(`UPDATE properties SET latitude = 12.9054, longitude = 80.2274, address = 'Survey 88/2, OMR Link Road, Sholinganallur, Chennai, Tamil Nadu' WHERE location LIKE '%Sholinganallur%' AND latitude IS NULL`);
+  db.exec(`UPDATE properties SET latitude = 13.1007, longitude = 77.5963, address = 'Lakeview Layout, Yelahanka, Bengaluru, Karnataka' WHERE location LIKE '%Yelahanka%' AND latitude IS NULL`);
+  db.exec(`UPDATE properties SET latitude = 13.2483, longitude = 77.7126, address = 'Aeroville Phase 1, Devanahalli, Bengaluru, Karnataka' WHERE location LIKE '%Devanahalli%' AND latitude IS NULL`);
+  
+  db.exec(`UPDATE properties SET latitude = 11.0168, longitude = 76.9558, address = location WHERE latitude IS NULL AND location LIKE '%Coimbatore%'`);
+  db.exec(`UPDATE properties SET latitude = 12.9716, longitude = 77.5946, address = location WHERE latitude IS NULL AND (location LIKE '%Bengaluru%' OR location LIKE '%Bangalore%')`);
+  db.exec(`UPDATE properties SET latitude = 13.0827, longitude = 80.2707, address = location WHERE latitude IS NULL AND location LIKE '%Chennai%'`);
+  db.exec(`UPDATE properties SET latitude = 11.5000, longitude = 77.2000, address = location WHERE latitude IS NULL`);
 } catch { /* ignore */ }
 const documentColumns = db.prepare("PRAGMA table_info(documents)").all().map((c) => c.name);
 if (!documentColumns.includes("document_type")) {

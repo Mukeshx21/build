@@ -17,6 +17,7 @@ import {
   Navigation,
   Layers,
   Building,
+  Building2,
   Maximize2,
   Minimize2,
   ShieldCheck,
@@ -37,6 +38,11 @@ import {
   AlertCircle,
   RefreshCw,
   X,
+  Filter,
+  RotateCcw,
+  Tag,
+  Bed,
+  Bath,
 } from 'lucide-react';
 
 // Tile provider presets
@@ -82,15 +88,27 @@ const REGION_CENTERS = {
   Chennai: { center: [13.0827, 80.2707], zoom: 12 },
 };
 
-// Map realistic geographic coordinates for property listings
+// Map actual geographic coordinates dynamically from the database
 function getPropertyCoordinates(property, index = 0) {
-  const loc = (property.location || '').toLowerCase();
+  // 1. If property has actual registered latitude & longitude in database
+  if (
+    property.latitude != null &&
+    property.longitude != null &&
+    !Number.isNaN(Number(property.latitude)) &&
+    !Number.isNaN(Number(property.longitude))
+  ) {
+    return [Number(property.latitude), Number(property.longitude)];
+  }
+
+  // 2. Realistic corridor lookups
+  const loc = (property.location || property.address || '').toLowerCase();
 
   // Coimbatore corridor
   if (loc.includes('kovilpalayam')) return [11.1396, 77.0392];
   if (loc.includes('saravanampatti')) return [11.0797, 76.9997];
   if (loc.includes('race course')) return [11.0016, 76.9746];
   if (loc.includes('avinashi')) return [11.0256, 77.0125];
+  if (loc.includes('sulur')) return [11.0264, 77.1245];
   if (loc.includes('vadavalli')) return [11.0238, 76.9015];
   if (loc.includes('peelamedu')) return [11.0311, 77.0028];
   if (loc.includes('pollachi')) return [10.6609, 77.0048];
@@ -108,6 +126,8 @@ function getPropertyCoordinates(property, index = 0) {
   if (loc.includes('hsr')) return [12.9121, 77.6446];
   if (loc.includes('electronic city')) return [12.8452, 77.6602];
   if (loc.includes('koramangala')) return [12.9352, 77.6245];
+  if (loc.includes('yelahanka')) return [13.1007, 77.5963];
+  if (loc.includes('devanahalli')) return [13.2483, 77.7126];
   if (loc.includes('hebbal')) return [13.0358, 77.597];
   if (loc.includes('sarjapur')) return [12.8601, 77.7865];
   if (loc.includes('bengaluru') || loc.includes('bangalore')) {
@@ -118,8 +138,8 @@ function getPropertyCoordinates(property, index = 0) {
   }
 
   // Chennai corridor
-  if (loc.includes('ecr')) return [12.8876, 80.2458];
-  if (loc.includes('omr')) return [12.9054, 80.2274];
+  if (loc.includes('ecr') || loc.includes('injambakkam')) return [12.8876, 80.2458];
+  if (loc.includes('omr') || loc.includes('sholinganallur')) return [12.9054, 80.2274];
   if (loc.includes('anna nagar')) return [13.085, 80.2101];
   if (loc.includes('velachery')) return [12.9815, 80.218];
   if (loc.includes('tambaram')) return [12.9249, 80.1];
@@ -137,7 +157,7 @@ function getPropertyCoordinates(property, index = 0) {
   return [baseLat, baseLng];
 }
 
-// Distance helper to filter out GPS jitter (< 2 meters)
+// Distance helper to filter out GPS jitter (< 2.5 meters)
 function getDistanceMeters(lat1, lon1, lat2, lon2) {
   const R = 6371000;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -183,6 +203,38 @@ const createPropertyMarkerIcon = (property, isSelected) => {
     property.price >= 10000000
       ? `₹${(property.price / 10000000).toFixed(1)}Cr`
       : `₹${(property.price / 100000).toFixed(0)}L`;
+
+  const isSold = property.status === 'SOLD';
+  const isPending = property.status === 'PENDING';
+
+  if (isSold) {
+    return L.divIcon({
+      className: 'custom-property-pin-wrapper',
+      html: `
+        <div class="leaflet-property-pin sold ${isSelected ? 'selected' : ''}">
+          <span class="sold-badge">SOLD</span>
+          <span class="pin-price">${priceText}</span>
+        </div>
+      `,
+      iconSize: [86, 30],
+      iconAnchor: [43, 30],
+    });
+  }
+
+  if (isPending) {
+    return L.divIcon({
+      className: 'custom-property-pin-wrapper',
+      html: `
+        <div class="leaflet-property-pin pending ${isSelected ? 'selected' : ''}">
+          <span class="pending-badge">PENDING</span>
+          <span class="pin-price">${priceText}</span>
+        </div>
+      `,
+      iconSize: [96, 30],
+      iconAnchor: [48, 30],
+    });
+  }
+
   return L.divIcon({
     className: 'custom-property-pin-wrapper',
     html: `
@@ -268,7 +320,11 @@ function MapController({
   return null;
 }
 
-export default function MapExplorer({ properties = [], onSelectProperty }) {
+export default function MapExplorer({
+  properties: initialProperties = [],
+  onSelectProperty,
+  onRefreshProperties,
+}) {
   // Map container & view state
   const mapWrapperRef = useRef(null);
   const [activeLayer, setActiveLayer] = useState('standard');
@@ -278,6 +334,16 @@ export default function MapExplorer({ properties = [], onSelectProperty }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [flyTarget, setFlyTarget] = useState(null);
 
+  // Filter State (Requirement 5)
+  const [statusFilter, setStatusFilter] = useState('AVAILABLE'); // AVAILABLE | SOLD | PENDING | ALL
+  const [typeFilter, setTypeFilter] = useState('');
+  const [minPrice, setMinPrice] = useState('');
+  const [maxPrice, setMaxPrice] = useState('');
+
+  // Dynamically loaded properties from database
+  const [dbProperties, setDbProperties] = useState(initialProperties);
+  const [loadingProperties, setLoadingProperties] = useState(false);
+
   // Real-Time User Geolocation state
   const [userPosition, setUserPosition] = useState(null);
   const [userHeading, setUserHeading] = useState(null);
@@ -285,7 +351,7 @@ export default function MapExplorer({ properties = [], onSelectProperty }) {
   const [userAccuracy, setUserAccuracy] = useState(null);
   const [userAltitude, setUserAltitude] = useState(null);
   const [lastUpdated, setLastUpdated] = useState('');
-  const [trackingStatus, setTrackingStatus] = useState('searching'); // searching | active | denied | unavailable | paused
+  const [trackingStatus, setTrackingStatus] = useState('searching');
   const [geoErrorMsg, setGeoErrorMsg] = useState('');
   const [isFollowingUser, setIsFollowingUser] = useState(false);
   const [pathHistory, setPathHistory] = useState([]);
@@ -304,6 +370,37 @@ export default function MapExplorer({ properties = [], onSelectProperty }) {
 
   // Watcher ID reference for geolocation
   const watchIdRef = useRef(null);
+
+  // Fetch properties from database when filters change
+  const fetchMapProperties = useCallback(async () => {
+    setLoadingProperties(true);
+    try {
+      const params = new URLSearchParams({ pageSize: '100' });
+      if (statusFilter) params.set('status', statusFilter);
+      if (typeFilter) params.set('type', typeFilter);
+      if (selectedCity && selectedCity !== 'All') params.set('location', selectedCity);
+      if (minPrice) params.set('minPrice', minPrice);
+      if (maxPrice) params.set('maxPrice', maxPrice);
+
+      const token = localStorage.getItem('landai_token');
+      const res = await fetch(`/api/properties?${params}`, {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        credentials: 'include',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDbProperties(data.properties || []);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch map properties dynamically:', err);
+    } finally {
+      setLoadingProperties(false);
+    }
+  }, [statusFilter, typeFilter, selectedCity, minPrice, maxPrice]);
+
+  useEffect(() => {
+    fetchMapProperties();
+  }, [fetchMapProperties]);
 
   // Start continuous watchPosition
   const startTracking = useCallback(() => {
@@ -520,13 +617,39 @@ export default function MapExplorer({ properties = [], onSelectProperty }) {
     setFlyTarget({ coords: target.center, zoom: target.zoom });
   };
 
-  // Filter properties
-  const filteredProperties = useMemo(() => {
-    if (selectedCity === 'All') return properties;
-    return properties.filter((p) =>
-      p.location.toLowerCase().includes(selectedCity.toLowerCase())
-    );
-  }, [properties, selectedCity]);
+  // Reset all filters
+  const handleResetFilters = () => {
+    setStatusFilter('AVAILABLE');
+    setTypeFilter('');
+    setMinPrice('');
+    setMaxPrice('');
+    setSelectedCity('All');
+    setFlyTarget({ coords: REGION_CENTERS.All.center, zoom: REGION_CENTERS.All.zoom });
+  };
+
+  // Active properties list (falls back to props if database returned empty)
+  const displayProperties = useMemo(() => {
+    const baseList = dbProperties.length > 0 ? dbProperties : initialProperties;
+    return baseList.filter((p) => {
+      // Status filter
+      if (statusFilter && statusFilter !== 'ALL') {
+        const pStatus = (p.status || 'AVAILABLE').toUpperCase();
+        if (pStatus !== statusFilter) return false;
+      }
+      // Type filter
+      if (typeFilter && p.type !== typeFilter) return false;
+      // Location filter
+      if (selectedCity && selectedCity !== 'All') {
+        const matchLoc = (p.location || '').toLowerCase();
+        if (!matchLoc.includes(selectedCity.toLowerCase())) return false;
+      }
+      // Price filters
+      if (minPrice && p.price < Number(minPrice)) return false;
+      if (maxPrice && p.price > Number(maxPrice)) return false;
+
+      return true;
+    });
+  }, [dbProperties, initialProperties, statusFilter, typeFilter, selectedCity, minPrice, maxPrice]);
 
   // Click a property card in rail
   const handleSelectRailProperty = (property, coords) => {
@@ -541,12 +664,12 @@ export default function MapExplorer({ properties = [], onSelectProperty }) {
       <div className="section-header-block">
         <div>
           <div className="hero-eyebrow">
-            <span className="eyebrow-pill">REAL-TIME GEOSPATIAL ENGINE</span>
-            <span className="eyebrow-note">LEAFLET &amp; GPS TELEMETRY</span>
+            <span className="eyebrow-pill">REAL-TIME PROPERTY MAP</span>
+            <span className="eyebrow-note">DYNAMIC CADASTRAL &amp; GPS ENGINE</span>
           </div>
-          <h1>Interactive Map Explorer</h1>
+          <h1>Interactive Property Map</h1>
           <p className="section-subtext">
-            Explore verified land parcels with live GPS location tracking, satellite overlays, and search geocoding.
+            Explore verified land parcels and homes with real-time location markers, status filters, and live telemetry.
           </p>
         </div>
 
@@ -562,6 +685,95 @@ export default function MapExplorer({ properties = [], onSelectProperty }) {
               {city} Corridors
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* Map Filter Bar (Requirement 5) */}
+      <div className="map-filter-bar">
+        {/* Left: Availability Status Filter Pills */}
+        <div className="map-filter-group-left">
+          <div className="map-filter-item">
+            <span className="map-filter-label">Status:</span>
+            <div className="status-filter-pills">
+              <button
+                type="button"
+                className={`status-pill-btn ${statusFilter === 'AVAILABLE' ? 'active' : ''}`}
+                onClick={() => setStatusFilter('AVAILABLE')}
+              >
+                <span>Available</span>
+              </button>
+              <button
+                type="button"
+                className={`status-pill-btn ${statusFilter === 'SOLD' ? 'active sold-pill' : ''}`}
+                onClick={() => setStatusFilter('SOLD')}
+              >
+                <Tag size={11} />
+                <span>Sold ({dbProperties.filter((p) => p.status === 'SOLD').length})</span>
+              </button>
+              <button
+                type="button"
+                className={`status-pill-btn ${statusFilter === 'PENDING' ? 'active pending-pill' : ''}`}
+                onClick={() => setStatusFilter('PENDING')}
+              >
+                <Clock size={11} />
+                <span>Pending</span>
+              </button>
+              <button
+                type="button"
+                className={`status-pill-btn ${statusFilter === 'ALL' ? 'active' : ''}`}
+                onClick={() => setStatusFilter('ALL')}
+              >
+                <span>All ({dbProperties.length})</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Property Type Dropdown */}
+          <div className="map-filter-item">
+            <span className="map-filter-label">Type:</span>
+            <select
+              className="map-filter-select"
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+            >
+              <option value="">All Types</option>
+              <option value="Plot">Plot / Land</option>
+              <option value="Residential">Residential</option>
+              <option value="Villa">Villa</option>
+              <option value="Commercial">Commercial</option>
+              <option value="Apartment">Apartment</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Right: Budget Range & Reset */}
+        <div className="map-filter-group-right">
+          <div className="map-filter-item">
+            <span className="map-filter-label">Price:</span>
+            <select
+              className="map-filter-select"
+              value={maxPrice}
+              onChange={(e) => setMaxPrice(e.target.value)}
+            >
+              <option value="">Any Budget</option>
+              <option value="5000000">Under ₹50 Lakhs</option>
+              <option value="10000000">Under ₹1 Crore</option>
+              <option value="20000000">Under ₹2 Crores</option>
+              <option value="50000000">Under ₹5 Crores</option>
+            </select>
+          </div>
+
+          {(statusFilter !== 'AVAILABLE' || typeFilter || maxPrice || selectedCity !== 'All') && (
+            <button
+              type="button"
+              className="reset-filters-btn"
+              onClick={handleResetFilters}
+              title="Reset all filters to default"
+            >
+              <RotateCcw size={12} />
+              <span>Reset</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -829,10 +1041,12 @@ export default function MapExplorer({ properties = [], onSelectProperty }) {
               </Marker>
             ))}
 
-            {/* Property Markers */}
-            {filteredProperties.map((prop, idx) => {
+            {/* Property Markers (Requirements 1 & 2) */}
+            {displayProperties.map((prop, idx) => {
               const coords = getPropertyCoordinates(prop, idx);
               const isSelected = activeProperty?.id === prop.id;
+              const isSold = prop.status === 'SOLD';
+              const isPending = prop.status === 'PENDING';
 
               return (
                 <Marker
@@ -846,16 +1060,50 @@ export default function MapExplorer({ properties = [], onSelectProperty }) {
                     },
                   }}
                 >
+                  {/* Property Information Popup (Requirement 2) */}
                   <Popup>
                     <div className="map-popup-card">
-                      <img
-                        src={prop.image}
-                        alt={prop.title}
-                        className="map-popup-thumb"
-                      />
+                      <div className="map-popup-thumb-wrap">
+                        <img
+                          src={prop.image}
+                          alt={prop.title}
+                          className="map-popup-thumb"
+                        />
+                        <span
+                          className={`popup-status-badge ${
+                            isSold
+                              ? 'status-sold'
+                              : isPending
+                              ? 'status-pending'
+                              : 'status-available'
+                          }`}
+                        >
+                          {prop.status || 'AVAILABLE'}
+                        </span>
+                      </div>
                       <div className="map-popup-body">
+                        <div className="map-popup-type-tag">
+                          {prop.type || prop.property_type || 'Residential'}
+                        </div>
                         <div className="map-popup-title">{prop.title}</div>
-                        <span className="map-popup-location">{prop.location}</span>
+                        <div className="map-popup-address">
+                          <MapPin size={11} />
+                          <span>{prop.address || prop.location}</span>
+                        </div>
+
+                        <div className="map-popup-specs-row">
+                          <span>
+                            {prop.area} {prop.area_unit || 'sq.ft'}
+                          </span>
+                          {prop.bedrooms > 0 && <span>• {prop.bedrooms} Beds</span>}
+                          {prop.bathrooms > 0 && <span>• {prop.bathrooms} Baths</span>}
+                        </div>
+
+                        <div className="map-popup-seller-info">
+                          <Building2 size={11} />
+                          <span>Listed by: {prop.seller?.name || 'Verified LandAI Owner'}</span>
+                        </div>
+
                         <div className="map-popup-meta">
                           <span className="map-popup-price">
                             ₹
@@ -863,10 +1111,16 @@ export default function MapExplorer({ properties = [], onSelectProperty }) {
                               ? `${(prop.price / 10000000).toFixed(2)} Cr`
                               : `${(prop.price / 100000).toFixed(2)} Lakhs`}
                           </span>
-                          <span className="map-popup-area">
-                            {prop.area} {prop.area_unit || 'sq.ft'}
+                          <span
+                            className={`map-popup-avail-tag ${
+                              isSold ? 'sold' : isPending ? 'pending' : 'available'
+                            }`}
+                          >
+                            {isSold ? 'Sold' : isPending ? 'Pending Sale' : 'Available'}
                           </span>
                         </div>
+
+                        {/* View Details Button navigating to complete property details */}
                         <button
                           type="button"
                           className="map-popup-btn"
@@ -874,7 +1128,7 @@ export default function MapExplorer({ properties = [], onSelectProperty }) {
                             if (onSelectProperty) onSelectProperty(prop);
                           }}
                         >
-                          <span>View Parcel Details</span>
+                          <span>View Details</span>
                           <ArrowRight size={12} />
                         </button>
                       </div>
@@ -969,52 +1223,83 @@ export default function MapExplorer({ properties = [], onSelectProperty }) {
         {/* Right Sidebar: Parcel Cards List */}
         <div className="map-properties-rail">
           <div className="rail-header">
-            <h4>Verified Land Parcels ({filteredProperties.length})</h4>
+            <h4>
+              Parcels in View ({displayProperties.length})
+              {loadingProperties && <RefreshCw size={11} className="spin-icon" style={{ marginLeft: 6 }} />}
+            </h4>
             <span>Click any parcel to pan map</span>
           </div>
 
           <div className="rail-cards-scroll">
-            {filteredProperties.map((property, idx) => {
-              const coords = getPropertyCoordinates(property, idx);
-              const isActive = activeProperty?.id === property.id;
-
-              return (
-                <div
-                  key={property.id}
-                  className={`rail-property-card ${isActive ? 'active' : ''}`}
-                  onClick={() => handleSelectRailProperty(property, coords)}
+            {displayProperties.length === 0 ? (
+              <div style={{ padding: '30px 16px', textAlign: 'center', color: '#777' }}>
+                <Building size={24} style={{ margin: '0 auto 8px', opacity: 0.5 }} />
+                <p style={{ fontSize: '13px', fontWeight: 600, color: '#333' }}>No properties match this filter</p>
+                <p style={{ fontSize: '11px', marginTop: 4 }}>Try selecting another corridor or status.</p>
+                <button
+                  type="button"
+                  className="reset-filters-btn"
+                  style={{ margin: '12px auto 0' }}
+                  onClick={handleResetFilters}
                 >
-                  <img
-                    src={property.image}
-                    alt={property.title}
-                    className="rail-card-img"
-                  />
-                  <div className="rail-card-body">
-                    <strong>{property.title}</strong>
-                    <span className="rail-location">{property.location}</span>
-                    <div className="rail-meta-row">
-                      <span className="rail-price">
-                        ₹
-                        {property.price >= 10000000
-                          ? `${(property.price / 10000000).toFixed(2)} Cr`
-                          : `₹${(property.price / 100000).toFixed(2)} L`}
-                      </span>
-                      <span className="rail-area">
-                        {property.area} {property.area_unit || 'sq.ft'}
-                      </span>
-                    </div>
-                    <div className="rail-verify-tag">
-                      <ShieldCheck size={12} />
-                      <span>
-                        {property.verified
-                          ? 'Cadastral Verified'
-                          : 'Survey In Review'}
-                      </span>
+                  <RotateCcw size={11} />
+                  <span>Reset Filters</span>
+                </button>
+              </div>
+            ) : (
+              displayProperties.map((property, idx) => {
+                const coords = getPropertyCoordinates(property, idx);
+                const isActive = activeProperty?.id === property.id;
+                const isSold = property.status === 'SOLD';
+                const isPending = property.status === 'PENDING';
+
+                return (
+                  <div
+                    key={property.id}
+                    className={`rail-property-card ${isActive ? 'active' : ''} ${
+                      isSold ? 'card-is-sold' : ''
+                    }`}
+                    onClick={() => handleSelectRailProperty(property, coords)}
+                  >
+                    <img
+                      src={property.image}
+                      alt={property.title}
+                      className="rail-card-img"
+                    />
+                    <div className="rail-card-body">
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <strong style={{ fontSize: '13px' }}>{property.title}</strong>
+                        {isSold ? (
+                          <span className="rail-status-pill sold">SOLD</span>
+                        ) : isPending ? (
+                          <span className="rail-status-pill pending">PENDING</span>
+                        ) : null}
+                      </div>
+                      <span className="rail-location">{property.address || property.location}</span>
+                      <div className="rail-meta-row">
+                        <span className="rail-price">
+                          ₹
+                          {property.price >= 10000000
+                            ? `${(property.price / 10000000).toFixed(2)} Cr`
+                            : `₹${(property.price / 100000).toFixed(2)} L`}
+                        </span>
+                        <span className="rail-area">
+                          {property.area} {property.area_unit || 'sq.ft'}
+                        </span>
+                      </div>
+                      <div className="rail-verify-tag">
+                        <ShieldCheck size={12} />
+                        <span>
+                          {property.verified
+                            ? 'Cadastral Verified'
+                            : 'Survey In Review'}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </div>
       </div>

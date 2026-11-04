@@ -6235,3 +6235,228 @@ h1, h2, h3, h4, h5, p {
     display: none;
   }
 }
+
+
+/* ==========================================================================
+   Property Status System & Modal Enhancements (SOLD / PENDING / AVAILABLE)
+   ========================================================================== */
+
+.status-sold-pill {
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.status-pending-pill {
+  background: #d97706 !important;
+  color: #ffffff !important;
+  font-weight: 600;
+}
+
+.status-available-pill {
+  background: #16a34a !important;
+  color: #ffffff !important;
+  font-weight: 600;
+}
+
+.modal-price-lead-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.modal-sold-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: #fee2e2;
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  border: 1px solid #fecaca;
+}
+
+.modal-pending-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid #fde68a;
+}
+
+.modal-sub-address {
+  font-size: 13px;
+  color: var(--color-gray-500);
+}
+
+.modal-seller-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  margin: 18px 0;
+  background: #fafafa;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+}
+
+.modal-seller-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #171717;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.modal-seller-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.modal-seller-role {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #737373;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.modal-seller-name {
+  font-size: 14px;
+  color: #171717;
+  margin-top: 1px;
+}
+
+.modal-seller-meta {
+  font-size: 12px;
+  color: #525252;
+  margin-top: 2px;
+}
+
+.modal-seller-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #15803d;
+  background: #dcfce7;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+/* Modal Sold State Card (Right Column when status is SOLD) */
+.modal-sold-state-card {
+  background: #fff5f5;
+  border: 1.5px solid #fecaca;
+  padding: 28px;
+  text-align: center;
+  border-radius: 12px;
+}
+
+.modal-sold-stamp {
+  display: inline-block;
+  margin: 0 auto 14px;
+  padding: 6px 18px;
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  color: #dc2626;
+  border: 3px solid #dc2626;
+  border-radius: 6px;
+  transform: rotate(-3deg);
+  text-transform: uppercase;
+}
+
+.modal-sold-desc {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #4b5563;
+  margin: 12px 0 20px;
+}
+
+.modal-sold-meta-table {
+  background: #ffffff;
+  border: 1px solid #fee2e2;
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+  text-align: left;
+}
+
+.sold-meta-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.sold-text-red {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+.modal-sold-guidance {
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+.modal-pending-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #fffbeb;
+  border: 1px solid #fef3c7;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #92400e;
+  margin-bottom: 16px;
+}
+
+/* Property Card Badges */
+.property-status-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.property-status-badge.badge-sold {
+  background: #dc2626;
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(220, 38, 38, 0.4);
+}
+
+.property-status-badge.badge-pending {
+  background: #d97706;
+  color: #ffffff;
+}
+
+.card-is-sold .card-main-image {
+  filter: grayscale(40%) contrast(95%);
+}
+
+.card-address-hint {
+  font-size: 12px;
+  color: #737373;
+}

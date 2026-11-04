@@ -691,10 +691,7 @@ export default function App() {
         {/* VIEW C: MAP EXPLORER */}
         {activeTab === 'map' && (
           <div className="map-view-wrapper animate-fade">
-            <MapExplorer
-              properties={properties}
-              onSelectProperty={(p) => setSelectedProperty(p)}
-            />
+            <MapExplorer properties={properties} onSelectProperty={(p) => setSelectedProperty(p)} onRefreshProperties={fetchProperties} />
           </div>
         )}
 
@@ -759,6 +756,7 @@ export default function App() {
                 setEditingProperty(prop);
                 setAddPropertyOpen(true);
               }}
+              onListingChanged={fetchProperties}
             />
           </div>
         )}
@@ -773,6 +771,7 @@ export default function App() {
                 setEditingProperty(prop);
                 setAddPropertyOpen(true);
               }}
+              onListingChanged={fetchProperties}
             />
           </div>
         )}

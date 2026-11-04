@@ -43,11 +43,44 @@ const router = Router();
 const VALID_LISTING_STATUSES = ["Draft", "Published", "Unpublished", "Pending Review", "Rejected"];
 
 function formatProperty(row, { saved = false, reasons = [] } = {}) {
+  // Normalize status: AVAILABLE, SOLD, PENDING, DRAFT
+  let normStatus = (row.status || "").toUpperCase();
+  if (normStatus === "ACTIVE" || !normStatus) normStatus = "AVAILABLE";
+  if (normStatus === "ARCHIVED") normStatus = "DRAFT";
+  if (!["AVAILABLE", "SOLD", "PENDING", "DRAFT"].includes(normStatus)) {
+    normStatus = "AVAILABLE";
+  }
+
+  // Get seller information if available
+  let sellerInfo = null;
+  if (row.seller_id) {
+    try {
+      const s = db.prepare("SELECT id, name, email, phone, role FROM users WHERE id = ?").get(row.seller_id);
+      if (s) {
+        sellerInfo = { id: s.id, name: s.name, email: s.email, phone: s.phone, role: s.role };
+      }
+    } catch {
+      // ignore
+    }
+  }
+  if (!sellerInfo) {
+    sellerInfo = {
+      id: 0,
+      name: "Authorized Real Estate Promoter",
+      email: "promoter@landai.in",
+      phone: "+91 98765 43210",
+      role: "seller"
+    };
+  }
+
   return {
     id: row.id,
+    property_id: row.id,
     seller_id: row.seller_id,
+    seller: sellerInfo,
     title: row.title,
     location: row.location,
+    address: row.address || row.location,
     city: row.city || "",
     state: row.state || "",
     price: row.price,
@@ -55,6 +88,7 @@ function formatProperty(row, { saved = false, reasons = [] } = {}) {
     area_unit: row.area_unit || "sq.ft",
     built_up_area: row.built_up_area || 0,
     type: row.type,
+    property_type: row.type,
     score: row.score,
     image: row.image,
     images: safeParse(row.images_json, []),
@@ -66,13 +100,16 @@ function formatProperty(row, { saved = false, reasons = [] } = {}) {
     road_access: row.road_access || "",
     bedrooms: row.bedrooms || 0,
     bathrooms: row.bathrooms || 0,
-    status: row.status,
-    listing_status: row.listing_status || "Published",
+    latitude: row.latitude != null ? Number(row.latitude) : null,
+    longitude: row.longitude != null ? Number(row.longitude) : null,
+    status: normStatus,
+    listing_status: row.listing_status || (normStatus === "DRAFT" ? "Draft" : "Published"),
     sample_label: row.sample_label || "",
     is_sample: Boolean(row.sample_label),
     documents: safeParse(row.documents_json, []),
     created_at: row.created_at,
     updated_at: row.updated_at,
+    sold_at: row.sold_at || null,
     saved,
     recommendation_reasons: reasons,
   };
@@ -118,14 +155,32 @@ router.get("/properties", optionalAuthenticate, (req, res) => {
       maxPrice,
       minArea,
       maxArea,
+      status = "",
       mine = "",
       sort = "score_desc",
       page = "1",
-      pageSize = "12",
+      pageSize = "100",
     } = req.query;
 
     const clauses = [`status != 'Archived'`];
     const params = [];
+
+    // Status filtering
+    const cleanStatus = String(status || "").trim().toUpperCase();
+    if (cleanStatus === "SOLD") {
+      clauses.push("status = 'SOLD'");
+    } else if (cleanStatus === "PENDING") {
+      clauses.push("status = 'PENDING'");
+    } else if (cleanStatus === "DRAFT") {
+      clauses.push("status = 'DRAFT'");
+    } else if (cleanStatus === "ALL") {
+      // Show all statuses (buyers still only see published)
+    } else if (String(mine) !== "1" && String(mine).toLowerCase() !== "true") {
+      // Default for buyers: only show active AVAILABLE properties
+      clauses.push("(status = 'AVAILABLE' OR status = 'Active' OR status = 'available' OR status = '' OR status IS NULL)");
+      clauses.push("status != 'SOLD'");
+      clauses.push("status != 'DRAFT'");
+    }
 
     if (String(mine) === "1" || String(mine).toLowerCase() === "true") {
       if (!req.user) {
@@ -305,6 +360,18 @@ router.get("/seller/dashboard", authenticate, requireRole("seller"), (req, res) 
       .prepare("SELECT count(*) as count FROM properties WHERE seller_id = ? AND listing_status = 'Unpublished'")
       .get(sellerId);
 
+    const availableRow = db
+      .prepare("SELECT count(*) as count FROM properties WHERE seller_id = ? AND (status = 'AVAILABLE' OR status = 'Active' OR status IS NULL)")
+      .get(sellerId);
+
+    const soldRow = db
+      .prepare("SELECT count(*) as count FROM properties WHERE seller_id = ? AND status = 'SOLD'")
+      .get(sellerId);
+
+    const pendingSaleRow = db
+      .prepare("SELECT count(*) as count FROM properties WHERE seller_id = ? AND status = 'PENDING'")
+      .get(sellerId);
+
     const recentListings = db
       .prepare("SELECT * FROM properties WHERE seller_id = ? AND status != 'Archived' ORDER BY created_at DESC LIMIT 5")
       .all(sellerId)
@@ -317,6 +384,9 @@ router.get("/seller/dashboard", authenticate, requireRole("seller"), (req, res) 
         draft: draftRow.count,
         pending_review: pendingRow.count,
         unpublished: unpublishedRow.count,
+        available: availableRow.count,
+        sold: soldRow.count,
+        pending_sale: pendingSaleRow.count,
       },
       recent_listings: recentListings,
     });
@@ -330,7 +400,7 @@ router.get("/seller/dashboard", authenticate, requireRole("seller"), (req, res) 
 
 router.get("/seller/listings", authenticate, requireRole("seller"), (req, res) => {
   try {
-    const { q = "", listing_status = "", sort = "newest" } = req.query;
+    const { q = "", listing_status = "", status = "", sort = "newest" } = req.query;
     const sellerId = req.user.id;
 
     const clauses = ["seller_id = ?", "status != 'Archived'"];
@@ -344,6 +414,13 @@ router.get("/seller/listings", authenticate, requireRole("seller"), (req, res) =
     if (listing_status && VALID_LISTING_STATUSES.includes(listing_status)) {
       clauses.push("listing_status = ?");
       params.push(listing_status);
+    }
+    if (status) {
+      const clean = String(status).trim().toUpperCase();
+      if (clean === "SOLD" || clean === "PENDING" || clean === "DRAFT" || clean === "AVAILABLE") {
+        clauses.push("status = ?");
+        params.push(clean);
+      }
     }
 
     const orderMap = {
@@ -406,11 +483,13 @@ router.post(
   (req, res) => {
     try {
       const {
-        title, location, city = "", state = "",
+        title, location, address = "", city = "", state = "",
         price, area, area_unit = "sq.ft", built_up_area = 0,
         type, image, images = [], tags, description,
         description_long = "", facing = "", road_access = "",
         bedrooms = 0, bathrooms = 0,
+        latitude = null, longitude = null,
+        status = "AVAILABLE",
         listing_status = "Draft",
         documents = [],
       } = req.body || {};
@@ -433,20 +512,22 @@ router.post(
 
       const stmt = db.prepare(`
         INSERT INTO properties (
-          seller_id, title, location, city, state,
+          seller_id, title, location, address, city, state,
           price, area, area_unit, built_up_area,
           type, score, image, images_json,
           verified, tags, description, description_long,
           facing, road_access, bedrooms, bathrooms,
+          latitude, longitude,
           status, listing_status, sample_label, documents_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const result = stmt.run(
         req.user.id,
         String(title).trim(),
         String(location).trim(),
+        String(address || location).trim(),
         String(city).trim(),
         String(state).trim(),
         Number(price),
@@ -465,7 +546,9 @@ router.post(
         String(road_access).trim(),
         Number(bedrooms),
         Number(bathrooms),
-        "Active",
+        latitude != null && !Number.isNaN(Number(latitude)) ? Number(latitude) : null,
+        longitude != null && !Number.isNaN(Number(longitude)) ? Number(longitude) : null,
+        status.toUpperCase() === "SOLD" ? "SOLD" : status.toUpperCase() === "PENDING" ? "PENDING" : status.toUpperCase() === "DRAFT" ? "DRAFT" : "AVAILABLE",
         resolvedStatus,
         "",
         JSON.stringify(documentArray),
@@ -506,11 +589,12 @@ router.put(
       }
 
       const {
-        title, location, city, state,
+        title, location, address, city, state,
         price, area, area_unit, built_up_area,
         type, image, images, tags, description,
         description_long, facing, road_access,
-        bedrooms, bathrooms, listing_status, documents,
+        bedrooms, bathrooms, latitude, longitude,
+        status, listing_status, documents,
       } = req.body || {};
 
       const resolvedStatus =
@@ -518,18 +602,24 @@ router.put(
           ? listing_status
           : prop.listing_status;
 
+      const normPropStatus = status
+        ? (String(status).toUpperCase() === "SOLD" ? "SOLD" : String(status).toUpperCase() === "PENDING" ? "PENDING" : String(status).toUpperCase() === "DRAFT" ? "DRAFT" : "AVAILABLE")
+        : prop.status;
+
       db.prepare(`
         UPDATE properties SET
-          title = ?, location = ?, city = ?, state = ?,
+          title = ?, location = ?, address = ?, city = ?, state = ?,
           price = ?, area = ?, area_unit = ?, built_up_area = ?,
           type = ?, image = ?, images_json = ?,
           tags = ?, description = ?, description_long = ?,
           facing = ?, road_access = ?, bedrooms = ?, bathrooms = ?,
+          latitude = ?, longitude = ?, status = ?,
           listing_status = ?, documents_json = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(
         title ?? prop.title,
         location ?? prop.location,
+        address ?? prop.address ?? prop.location,
         city ?? prop.city ?? "",
         state ?? prop.state ?? "",
         price != null ? Number(price) : prop.price,
@@ -546,6 +636,9 @@ router.put(
         road_access ?? prop.road_access ?? "",
         bedrooms != null ? Number(bedrooms) : (prop.bedrooms || 0),
         bathrooms != null ? Number(bathrooms) : (prop.bathrooms || 0),
+        latitude != null ? Number(latitude) : prop.latitude,
+        longitude != null ? Number(longitude) : prop.longitude,
+        normPropStatus,
         resolvedStatus,
         documents ? JSON.stringify(documents) : (prop.documents_json || "[]"),
         propertyId,
@@ -573,13 +666,7 @@ router.patch(
   (req, res) => {
     try {
       const propertyId = req.params.id;
-      const { listing_status } = req.body || {};
-
-      if (!VALID_LISTING_STATUSES.includes(listing_status)) {
-        return res.status(400).json({
-          error: `Invalid status. Allowed values: ${VALID_LISTING_STATUSES.join(", ")}`,
-        });
-      }
+      const { status, listing_status } = req.body || {};
 
       const prop = db.prepare("SELECT * FROM properties WHERE id = ?").get(propertyId);
       if (!prop) return res.status(404).json({ error: "Property not found." });
@@ -587,18 +674,60 @@ router.patch(
         return res.status(403).json({ error: "You can only manage properties you listed." });
       }
 
-      db.prepare(
-        "UPDATE properties SET listing_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).run(listing_status, propertyId);
+      const VALID_STATUSES = ["AVAILABLE", "SOLD", "PENDING", "DRAFT"];
+      let updatedStatus = prop.status;
+      let updatedListingStatus = prop.listing_status;
+
+      if (status) {
+        const norm = String(status).trim().toUpperCase();
+        if (!VALID_STATUSES.includes(norm)) {
+          return res.status(400).json({
+            error: `Invalid property status. Allowed values: ${VALID_STATUSES.join(", ")}`,
+          });
+        }
+        updatedStatus = norm;
+
+        if (norm === "SOLD") {
+          db.prepare(
+            "UPDATE properties SET status = 'SOLD', sold_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+          ).run(propertyId);
+        } else if (norm === "AVAILABLE") {
+          db.prepare(
+            "UPDATE properties SET status = 'AVAILABLE', sold_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+          ).run(propertyId);
+        } else if (norm === "PENDING") {
+          db.prepare(
+            "UPDATE properties SET status = 'PENDING', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+          ).run(propertyId);
+        } else if (norm === "DRAFT") {
+          db.prepare(
+            "UPDATE properties SET status = 'DRAFT', listing_status = 'Draft', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+          ).run(propertyId);
+          updatedListingStatus = "Draft";
+        }
+      }
+
+      if (listing_status && VALID_LISTING_STATUSES.includes(listing_status)) {
+        updatedListingStatus = listing_status;
+        db.prepare(
+          "UPDATE properties SET listing_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+        ).run(listing_status, propertyId);
+      }
+
+      const updated = db.prepare("SELECT * FROM properties WHERE id = ?").get(propertyId);
+      const formatted = formatProperty(updated);
 
       return res.json({
         success: true,
-        message: `Listing status changed to ${listing_status}.`,
-        listing_status,
+        message: status === "SOLD" ? "Property marked as SOLD successfully." : `Property status updated to ${formatted.status}.`,
+        status: formatted.status,
+        listing_status: formatted.listing_status,
+        sold_at: formatted.sold_at,
+        property: formatted,
       });
     } catch (err) {
-      console.error("Error changing listing status:", err);
-      return res.status(500).json({ error: "Could not change listing status." });
+      console.error("Error changing property status:", err);
+      return res.status(500).json({ error: "Could not change property status." });
     }
   },
 );
