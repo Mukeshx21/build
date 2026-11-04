@@ -2,14 +2,54 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.resolve(__dirname, "data");
+import os from "node:os";
 
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Detect serverless environment (Vercel, AWS Lambda)
+const isServerless = Boolean(process.env.VERCEL) || Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+function resolveDatabasePath() {
+  const localDir = path.resolve(__dirname, "data");
+  const localDb = path.resolve(localDir, "landai.sqlite");
+
+  if (isServerless) {
+    const tmpDir = path.join(os.tmpdir(), "landai-data");
+    try {
+      if (!fs.existsSync(tmpDir)) {
+        fs.mkdirSync(tmpDir, { recursive: true });
+      }
+    } catch (e) {
+      console.warn("[Database] Using os.tmpdir directly:", e.message);
+      return path.join(os.tmpdir(), "landai.sqlite");
+    }
+
+    const tmpDb = path.join(tmpDir, "landai.sqlite");
+    if (fs.existsSync(localDb) && !fs.existsSync(tmpDb)) {
+      try {
+        fs.copyFileSync(localDb, tmpDb);
+        console.log(`[Database] Seeded database to writable /tmp: ${tmpDb}`);
+      } catch (e) {
+        console.warn("[Database] Could not copy bundled DB:", e.message);
+      }
+    }
+    return tmpDb;
+  }
+
+  // Local development: ensure data directory exists or fallback safely to tmpdir
+  try {
+    if (!fs.existsSync(localDir)) {
+      fs.mkdirSync(localDir, { recursive: true });
+    }
+    return localDb;
+  } catch (err) {
+    console.warn(`[Database] local data directory not writable (${err.message}). Using os.tmpdir()`);
+    return path.join(os.tmpdir(), "landai.sqlite");
+  }
 }
 
-const dbPath = path.resolve(dataDir, "landai.sqlite");
+const dbPath = resolveDatabasePath();
+console.log(`[Database] SQLite database active at: ${dbPath} (serverless: ${isServerless})`);
 
 let db;
 try {
@@ -114,8 +154,14 @@ try {
   };
 }
 
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+try {
+  db.pragma("journal_mode = WAL");
+} catch {
+  try { db.pragma("journal_mode = MEMORY"); } catch {}
+}
+try {
+  db.pragma("foreign_keys = ON");
+} catch {}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (

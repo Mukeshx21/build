@@ -67,6 +67,7 @@ router.post("/register", async (req, res) => {
     }
 
     const cleanEmail = email.trim().toLowerCase();
+    console.log(`[Auth] Registration started for email: ${cleanEmail}, role: ${cleanRole}`);
 
     // Duplicate account prevention
     const existing = db
@@ -154,7 +155,7 @@ router.post("/register", async (req, res) => {
       user,
     });
   } catch (err) {
-    console.error("Registration error:", err);
+    console.error(`[Auth] Registration error for ${req.body?.email || "unknown"}: ${err.name} - ${err.message}`);
     if (err.message && (err.message.includes("UNIQUE constraint") || err.code === "SQLITE_CONSTRAINT")) {
       return res.status(409).json({
         error: "An account with this email address already exists. Please sign in instead.",

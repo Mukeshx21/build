@@ -6,10 +6,19 @@ import { fileURLToPath } from "node:url";
 import db from "../db.js";
 import { authenticate, optionalAuthenticate, requireRole } from "../middleware/auth.js";
 
+import os from "node:os";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const uploadDir = path.resolve(__dirname, "../../public/uploads");
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+const isServerless = Boolean(process.env.VERCEL) || Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+const defaultUploadDir = path.resolve(__dirname, "../../public/uploads");
+const uploadDir = isServerless ? path.join(os.tmpdir(), "landai-uploads") : defaultUploadDir;
+
+try {
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+} catch (err) {
+  console.warn("[Uploads] Could not create uploadDir in properties.js:", err.message);
 }
 
 const storage = multer.diskStorage({

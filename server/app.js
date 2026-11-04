@@ -10,10 +10,19 @@ import documentsRouter from "./routes/documents.js";
 import ocrProxyRouter from "./routes/ocrProxy.js";
 import { ensureOcrRunning } from "./services/ocrClient.js";
 
+import os from "node:os";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const uploadsDir = path.resolve(__dirname, "../public/uploads");
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+const isServerless = Boolean(process.env.VERCEL) || Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+const defaultUploadsDir = path.resolve(__dirname, "../public/uploads");
+const uploadsDir = isServerless ? path.join(os.tmpdir(), "landai-uploads") : defaultUploadsDir;
+
+try {
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+} catch (err) {
+  console.warn("[Uploads] Could not create uploadsDir:", err.message);
 }
 
 const app = express();
@@ -62,6 +71,9 @@ app.use(cookieParser());
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true, limit: "20mb" }));
 app.use("/uploads", express.static(uploadsDir));
+if (fs.existsSync(defaultUploadsDir)) {
+  app.use("/uploads", express.static(defaultUploadsDir));
+}
 
 app.get("/api/health", (_req, res) => {
   res.json({
