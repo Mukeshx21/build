@@ -183,10 +183,10 @@
 .search-result-text span {
   font-size: 11px;
   color: #777777;
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  -webkit-box-orient: vertical;
+  display: block;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ------------------------------------------------------------------------------
