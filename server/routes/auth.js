@@ -130,13 +130,35 @@ router.post("/register", async (req, res) => {
       throw new Error("Database insertion did not return a valid user ID.");
     }
 
+    // Ensure linked LandAI user profile is established with full OCR and platform access
+    try {
+      db.prepare(`
+        INSERT OR REPLACE INTO user_profiles (user_id, display_name, email, role, phone, preferences_json, ocr_access, status)
+        VALUES (?, ?, ?, ?, ?, ?, 1, 'active')
+      `).run(
+        userId,
+        name.trim(),
+        cleanEmail,
+        cleanRole,
+        typeof phone === "string" ? phone.trim().slice(0, 32) : "",
+        JSON.stringify(normalizedPreferences),
+      );
+    } catch (profErr) {
+      console.warn("[Auth] Profile initialization warning:", profErr.message);
+    }
+
     const user = {
       id: userId,
+      user_id: userId,
       name: name.trim(),
+      display_name: name.trim(),
       email: cleanEmail,
       role: cleanRole,
       phone: typeof phone === "string" ? phone.trim().slice(0, 32) : "",
       preferences: normalizedPreferences,
+      ocr_access: 1,
+      status: "active",
+      has_profile: true,
     };
 
     const token = signToken({
@@ -204,13 +226,33 @@ router.post("/login", async (req, res) => {
       });
     }
 
+    // Auto-ensure linked LandAI profile exists for this account
+    let profile = null;
+    try {
+      profile = db.prepare("SELECT * FROM user_profiles WHERE user_id = ?").get(userRow.id);
+      if (!profile) {
+        db.prepare(`
+          INSERT OR IGNORE INTO user_profiles (user_id, display_name, email, role, phone, preferences_json, ocr_access, status)
+          VALUES (?, ?, ?, ?, ?, ?, 1, 'active')
+        `).run(userRow.id, userRow.name, userRow.email, userRow.role, userRow.phone || "", userRow.preferences_json || "{}");
+        profile = db.prepare("SELECT * FROM user_profiles WHERE user_id = ?").get(userRow.id);
+      }
+    } catch {
+      // safe fallback
+    }
+
     const user = {
       id: userRow.id,
+      user_id: userRow.id,
       name: userRow.name,
+      display_name: userRow.name,
       email: userRow.email,
       role: userRow.role,
       phone: userRow.phone || "",
       preferences: safeParse(userRow.preferences_json, {}),
+      ocr_access: profile?.ocr_access ?? 1,
+      status: profile?.status || userRow.account_status || "active",
+      has_profile: true,
       created_at: userRow.created_at,
       updated_at: userRow.updated_at,
     };
@@ -290,7 +332,7 @@ router.post("/reset-password", async (req, res) => {
  * Get currently authenticated user profile.
  */
 router.get("/me", authenticate, (req, res) => {
-  return res.json({ user: req.user });
+  return res.json({ user: req.user, profile: req.user.profile });
 });
 
 /**
@@ -327,6 +369,35 @@ router.patch("/me", authenticate, (req, res) => {
     values.push(req.user.id);
     db.prepare(`UPDATE users SET ${updates.join(", ")} WHERE id = ?`).run(...values);
 
+    // Also update user_profiles
+    try {
+      const profUpdates = [];
+      const profValues = [];
+      if (typeof name === "string" && name.trim().length >= 2) {
+        profUpdates.push("display_name = ?");
+        profValues.push(name.trim());
+      }
+      if (typeof phone === "string") {
+        profUpdates.push("phone = ?");
+        profValues.push(phone.trim().slice(0, 32));
+      }
+      if (preferences && typeof preferences === "object") {
+        profUpdates.push("preferences_json = ?");
+        profValues.push(JSON.stringify(preferences));
+      }
+      if (role && ALLOWED_ROLES.has(String(role).toLowerCase())) {
+        profUpdates.push("role = ?");
+        profValues.push(String(role).toLowerCase());
+      }
+      if (profUpdates.length) {
+        profUpdates.push("updated_at = CURRENT_TIMESTAMP");
+        profValues.push(req.user.id);
+        db.prepare(`UPDATE user_profiles SET ${profUpdates.join(", ")} WHERE user_id = ?`).run(...profValues);
+      }
+    } catch (e) {
+      console.warn("[Auth] user_profiles update notice:", e.message);
+    }
+
     const userRow = db
       .prepare(
         `SELECT id, name, email, role, phone, preferences_json, created_at, updated_at
@@ -334,13 +405,20 @@ router.patch("/me", authenticate, (req, res) => {
       )
       .get(req.user.id);
 
+    const profileRow = db.prepare("SELECT * FROM user_profiles WHERE user_id = ?").get(req.user.id);
+
     const user = {
       id: userRow.id,
+      user_id: userRow.id,
       name: userRow.name,
+      display_name: userRow.name,
       email: userRow.email,
       role: userRow.role,
       phone: userRow.phone || "",
       preferences: safeParse(userRow.preferences_json, {}),
+      ocr_access: profileRow?.ocr_access ?? 1,
+      status: profileRow?.status || "active",
+      has_profile: true,
       created_at: userRow.created_at,
       updated_at: userRow.updated_at,
     };

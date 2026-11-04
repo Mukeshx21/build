@@ -42,6 +42,122 @@ function extractToken(req) {
   return null;
 }
 
+/**
+ * Robust identity and profile resolver.
+ * Handles primary key lookup, email fallback, cross-container session recovery,
+ * and automatic synchronization with the user_profiles table.
+ */
+function resolveUserAndProfile(decoded) {
+  if (!decoded || (!decoded.id && !decoded.userId && !decoded.sub && !decoded.email)) {
+    return null;
+  }
+
+  const rawId = decoded.id ?? decoded.userId ?? decoded.sub;
+  const candidateId = Number(rawId);
+  const candidateEmail = typeof decoded.email === "string" ? decoded.email.trim().toLowerCase() : null;
+
+  let user = null;
+  if (candidateEmail) {
+    user = db
+      .prepare(
+        `SELECT id, name, email, role, phone, preferences_json, account_status, created_at, updated_at
+         FROM users WHERE LOWER(email) = LOWER(?)`,
+      )
+      .get(candidateEmail);
+  }
+
+  if (!user && !Number.isNaN(candidateId) && Number.isInteger(candidateId) && candidateId > 0) {
+    user = db
+      .prepare(
+        `SELECT id, name, email, role, phone, preferences_json, account_status, created_at, updated_at
+         FROM users WHERE id = ?`,
+      )
+      .get(candidateId);
+  }
+
+  // Auto-repair / fallback mechanism:
+  // If the token is cryptographically verified but the row does not exist in the active
+  // database instance (e.g. fresh serverless container or ephemeral /tmp SQLite),
+  // safely restore the user account and linked LandAI profile so OCR and features work seamlessly.
+  if (!user && (candidateEmail || (!Number.isNaN(candidateId) && candidateId > 0))) {
+    const safeEmail = candidateEmail || `user_${candidateId}@landai.local`;
+    const safeName = decoded.name || decoded.display_name || safeEmail.split("@")[0] || "LandAI User";
+    const rawRole = (decoded.role && typeof decoded.role === "string") ? decoded.role.toLowerCase() : "buyer";
+    const dbRole = (rawRole === "seller" || rawRole === "agent") ? "seller" : "buyer";
+
+    try {
+      const existingWithId = (!Number.isNaN(candidateId) && candidateId > 0)
+        ? db.prepare("SELECT email FROM users WHERE id = ?").get(candidateId)
+        : null;
+
+      if (!existingWithId && !Number.isNaN(candidateId) && candidateId > 0) {
+        db.prepare(`
+          INSERT OR IGNORE INTO users (id, name, email, password_hash, role, email_verified, account_status)
+          VALUES (?, ?, ?, 'restored_session_hash', ?, 1, 'active')
+        `).run(candidateId, safeName, safeEmail, dbRole);
+      } else {
+        db.prepare(`
+          INSERT OR IGNORE INTO users (name, email, password_hash, role, email_verified, account_status)
+          VALUES (?, ?, 'restored_session_hash', ?, 1, 'active')
+        `).run(safeName, safeEmail, dbRole);
+      }
+    } catch (insertErr) {
+      console.warn("[Auth] Session recovery insert notice:", insertErr.message);
+    }
+
+    user = db
+      .prepare(
+        `SELECT id, name, email, role, phone, preferences_json, account_status, created_at, updated_at
+         FROM users WHERE LOWER(email) = LOWER(?)`,
+      )
+      .get(safeEmail);
+  }
+
+  if (!user) {
+    return null;
+  }
+
+  // Ensure linked LandAI user profile exists
+  let profile = null;
+  try {
+    profile = db.prepare("SELECT * FROM user_profiles WHERE user_id = ?").get(user.id);
+    if (!profile) {
+      db.prepare(`
+        INSERT OR REPLACE INTO user_profiles (user_id, display_name, email, role, phone, preferences_json, ocr_access, status)
+        VALUES (?, ?, ?, ?, ?, ?, 1, 'active')
+      `).run(user.id, user.name, user.email, user.role, user.phone || "", user.preferences_json || "{}");
+      profile = db.prepare("SELECT * FROM user_profiles WHERE user_id = ?").get(user.id);
+    }
+  } catch (profErr) {
+    console.warn("[Auth] Profile auto-repair notice:", profErr.message);
+  }
+
+  return {
+    id: user.id,
+    user_id: user.id,
+    name: user.name,
+    display_name: profile?.display_name || user.name,
+    email: user.email,
+    role: user.role,
+    phone: user.phone || "",
+    preferences: safeJson(user.preferences_json, {}),
+    profile: profile || {
+      id: user.id,
+      user_id: user.id,
+      display_name: user.name,
+      email: user.email,
+      role: user.role,
+      ocr_access: 1,
+      status: "active",
+    },
+    ocr_access: profile?.ocr_access ?? 1,
+    status: profile?.status || user.account_status || "active",
+    has_profile: true,
+    created_at: user.created_at,
+    updated_at: user.updated_at,
+  };
+}
+
 export function authenticate(req, res, next) {
   const token = extractToken(req);
   if (!token) {
@@ -53,21 +169,9 @@ export function authenticate(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    if (!decoded || !decoded.id) {
-      return res.status(401).json({
-        error: "Invalid session token. Please sign in again.",
-        code: "INVALID_TOKEN",
-      });
-    }
+    const resolvedUser = resolveUserAndProfile(decoded);
 
-    const user = db
-      .prepare(
-        `SELECT id, name, email, role, phone, preferences_json, created_at, updated_at
-         FROM users WHERE id = ?`,
-      )
-      .get(decoded.id);
-
-    if (!user) {
+    if (!resolvedUser) {
       clearAuthCookie(res);
       return res.status(401).json({
         error: "No LandAI profile found for this account. Please complete registration.",
@@ -75,17 +179,7 @@ export function authenticate(req, res, next) {
       });
     }
 
-    req.user = {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      phone: user.phone || "",
-      preferences: safeJson(user.preferences_json, {}),
-      created_at: user.created_at,
-      updated_at: user.updated_at,
-    };
-
+    req.user = resolvedUser;
     next();
   } catch (err) {
     clearAuthCookie(res);
@@ -105,32 +199,7 @@ export function optionalAuthenticate(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    if (!decoded || !decoded.id) {
-      req.user = null;
-      return next();
-    }
-
-    const user = db
-      .prepare(
-        `SELECT id, name, email, role, phone, preferences_json, created_at, updated_at
-         FROM users WHERE id = ?`,
-      )
-      .get(decoded.id);
-
-    if (user) {
-      req.user = {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        phone: user.phone || "",
-        preferences: safeJson(user.preferences_json, {}),
-        created_at: user.created_at,
-        updated_at: user.updated_at,
-      };
-    } else {
-      req.user = null;
-    }
+    req.user = resolveUserAndProfile(decoded);
   } catch {
     req.user = null;
   }

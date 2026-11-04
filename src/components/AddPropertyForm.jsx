@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { apiUrl } from '../services/api';
 import {
   X,
   ChevronLeft,
@@ -251,7 +252,7 @@ export default function AddPropertyForm({
       formData.append('document_type', docType);
 
       // Step 1: Upload
-      const upRes = await fetch('/api/documents/upload', {
+      const upRes = await fetch(apiUrl('/api/documents/upload'), {
         method: 'POST',
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -268,7 +269,7 @@ export default function AddPropertyForm({
       // Step 2: OCR Process
       let procData = null;
       try {
-        const procRes = await fetch('/api/documents/process', {
+        const procRes = await fetch(apiUrl('/api/documents/process'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -290,7 +291,7 @@ export default function AddPropertyForm({
       let valData = null;
       try {
         const docId = upData.local_id ?? upData.id ?? upData.document_id;
-        const valRes = await fetch(`/api/documents/${docId}/validate`, {
+        const valRes = await fetch(apiUrl(`/api/documents/${docId}/validate`), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

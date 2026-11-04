@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { apiUrl } from '../services/api';
 import {
   UploadCloud,
   FileText,
@@ -54,7 +55,7 @@ export default function DocumentVerification({ user, onOpenAuth }) {
   const fetchHistory = async () => {
     if (!user) return;
     try {
-      const res = await fetch('/api/documents', {
+      const res = await fetch(apiUrl('/api/documents'), {
         headers: {
           ...(localStorage.getItem('landai_token')
             ? { Authorization: `Bearer ${localStorage.getItem('landai_token')}` }
@@ -120,7 +121,7 @@ export default function DocumentVerification({ user, onOpenAuth }) {
       formData.append('document_type', docType);
 
       const token = localStorage.getItem('landai_token');
-      const uploadRes = await fetch('/api/documents/upload', {
+      const uploadRes = await fetch(apiUrl('/api/documents/upload'), {
         method: 'POST',
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -138,7 +139,7 @@ export default function DocumentVerification({ user, onOpenAuth }) {
       setProcessStep('Running bilingual OCR and extracting text layers...');
 
       // Step 2: OCR Process
-      const processRes = await fetch('/api/documents/process', {
+      const processRes = await fetch(apiUrl('/api/documents/process'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -160,7 +161,7 @@ export default function DocumentVerification({ user, onOpenAuth }) {
       let valData = null;
       try {
         const docId = uploadData.local_id ?? uploadData.id ?? uploadData.document_id;
-        const valRes = await fetch(`/api/documents/${docId}/validate`, {
+        const valRes = await fetch(apiUrl(`/api/documents/${docId}/validate`), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -202,7 +203,7 @@ export default function DocumentVerification({ user, onOpenAuth }) {
     try {
       const token = localStorage.getItem('landai_token');
       const selectedDocId = docItem.local_id ?? docItem.id ?? docItem.document_id;
-      const res = await fetch(`/api/documents/${selectedDocId}`, {
+      const res = await fetch(apiUrl(`/api/documents/${selectedDocId}`), {
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
@@ -217,7 +218,7 @@ export default function DocumentVerification({ user, onOpenAuth }) {
 
       // Fetch validation if available
       try {
-        const valRes = await fetch(`/api/documents/${selectedDocId}/validate`, {
+        const valRes = await fetch(apiUrl(`/api/documents/${selectedDocId}/validate`), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -256,7 +257,7 @@ export default function DocumentVerification({ user, onOpenAuth }) {
 
     try {
       const token = localStorage.getItem('landai_token');
-      const res = await fetch('/api/documents/compare', {
+      const res = await fetch(apiUrl('/api/documents/compare'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -283,7 +284,7 @@ export default function DocumentVerification({ user, onOpenAuth }) {
     if (!activeDocument) return;
     const docId = activeDocument.local_id || activeDocument.id;
     const token = localStorage.getItem('landai_token');
-    const url = format === 'report' ? `/api/documents/${docId}/validation/report` : `/api/documents/${docId}/export/${format}`;
+    const url = format === 'report' ? apiUrl(`/api/documents/${docId}/validation/report`) : apiUrl(`/api/documents/${docId}/export/${format}`);
 
     window.open(url, '_blank');
   };

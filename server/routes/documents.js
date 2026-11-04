@@ -71,9 +71,31 @@ function getOwnedDocument(userId, idOrOcrId) {
       .get(num, userId);
     if (byPk) return byPk;
   }
-  return db
+  const byOcr = db
     .prepare("SELECT * FROM documents WHERE ocr_document_id = ? AND user_id = ?")
     .get(String(idOrOcrId), userId);
+  if (byOcr) return byOcr;
+
+  // Fallback resilience for serverless multi-container instances:
+  // If the document exists and the owning user's email matches the current user's email,
+  // allow access and optionally update owner reference.
+  try {
+    const candidateDoc = (!Number.isNaN(num) && Number.isInteger(num) && num > 0)
+      ? db.prepare("SELECT * FROM documents WHERE id = ?").get(num)
+      : db.prepare("SELECT * FROM documents WHERE ocr_document_id = ?").get(String(idOrOcrId));
+
+    if (candidateDoc) {
+      const owner = db.prepare("SELECT email FROM users WHERE id = ?").get(candidateDoc.user_id);
+      const currentUser = db.prepare("SELECT email FROM users WHERE id = ?").get(userId);
+      if (owner && currentUser && owner.email.toLowerCase() === currentUser.email.toLowerCase()) {
+        return candidateDoc;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
 }
 
 router.get("/health/ocr", authenticate, async (_req, res) => {

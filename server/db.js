@@ -178,6 +178,25 @@ db.exec(`
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS user_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER UNIQUE NOT NULL,
+    display_name TEXT NOT NULL,
+    email TEXT NOT NULL COLLATE NOCASE,
+    role TEXT NOT NULL DEFAULT 'buyer',
+    phone TEXT DEFAULT '',
+    avatar_url TEXT DEFAULT '',
+    preferences_json TEXT DEFAULT '{}',
+    ocr_access INTEGER DEFAULT 1,
+    status TEXT DEFAULT 'active',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_user_profiles_user ON user_profiles(user_id);
+  CREATE INDEX IF NOT EXISTS idx_user_profiles_email ON user_profiles(email);
+
   CREATE TABLE IF NOT EXISTS properties (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     seller_id INTEGER DEFAULT 0,
@@ -315,6 +334,16 @@ if (!userColumns.includes("updated_at")) {
   } catch {
     /* ignore */
   }
+}
+
+// Auto-migrate any existing users into user_profiles so all existing accounts have valid LandAI profiles
+try {
+  db.exec(`
+    INSERT OR IGNORE INTO user_profiles (user_id, display_name, email, role, phone, preferences_json, ocr_access, status)
+    SELECT id, name, email, role, phone, preferences_json, 1, 'active' FROM users
+  `);
+} catch (e) {
+  console.warn("[Database] user_profiles migration notice:", e.message);
 }
 
 const propertyColumns = db.prepare("PRAGMA table_info(properties)").all().map((c) => c.name);
