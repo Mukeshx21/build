@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import authRouter from "./routes/auth.js";
 import propertyRouter from "./routes/properties.js";
 import documentsRouter from "./routes/documents.js";
+import ocrProxyRouter from "./routes/ocrProxy.js";
 import { ensureOcrRunning } from "./services/ocrClient.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -72,9 +73,26 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+// Health check endpoints
+app.get(["/api/health", "/health"], (_req, res) => {
+  res.json({
+    status: "ok",
+    service: "Terra / LandAI Unified Platform API",
+    timestamp: new Date().toISOString(),
+    auth: "JWT Native (Bcrypt + SQLite)",
+    ocr_service_url: process.env.VITE_OCR_API_URL || "http://127.0.0.1:8000",
+  });
+});
+
+// Mount routes with and without /api prefix for Vercel serverless rewrite compatibility
 app.use("/api/auth", authRouter);
+app.use("/auth", authRouter);
 app.use("/api/documents", documentsRouter);
+app.use("/documents", documentsRouter);
+app.use("/api/ocr", ocrProxyRouter);
+app.use("/ocr", ocrProxyRouter);
 app.use("/api", propertyRouter);
+app.use("/", propertyRouter);
 // Seller-specific routes are mounted under /api/seller/* and /api/properties/*
 // via the propertyRouter which handles both public and seller endpoints
 
