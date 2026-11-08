@@ -18,15 +18,19 @@ import {
   Star,
   FileText,
   RefreshCw,
-  Info
+  Info,
+  ShieldCheck,
+  Sparkles,
+  Check,
+  AlertTriangle
 } from 'lucide-react';
 
 const STEPS = [
-  { id: 'basic', label: 'Basic Info', icon: Building2 },
+  { id: 'basic', label: 'Basic Info & Legal', icon: Building2 },
   { id: 'location', label: 'Location', icon: MapPin },
   { id: 'pricing', label: 'Price & Area', icon: IndianRupee },
   { id: 'photos', label: 'Photographs', icon: ImageIcon },
-  { id: 'documents', label: 'Documents & OCR', icon: FileCheck2 },
+  { id: 'documents', label: 'Mandatory Documents', icon: FileCheck2 },
   { id: 'publish', label: 'Review & Publish', icon: Globe },
 ];
 
@@ -84,6 +88,15 @@ export default function AddPropertyForm({
   const [docLanguage, setDocLanguage] = useState('ta-en');
   const [docProcessMsg, setDocProcessMsg] = useState('');
 
+  // Strict Document Verification State
+  const [verificationReport, setVerificationReport] = useState(
+    initialProperty?.verification_report || null
+  );
+  const [verificationStatus, setVerificationStatus] = useState(
+    initialProperty?.verification_status || (initialProperty?.verified ? 'VERIFIED' : 'PENDING')
+  );
+  const [verifyingDoc, setVerifyingDoc] = useState(false);
+
   const isEditMode = Boolean(initialProperty && initialProperty.id);
 
   // Form state
@@ -93,9 +106,13 @@ export default function AddPropertyForm({
     listing_purpose: 'Sale',
     description: initialProperty?.description || '',
     description_long: initialProperty?.description_long || '',
+    owner_name: initialProperty?.owner_name || user?.name || '',
+    survey_number: initialProperty?.survey_number || '',
+    subdivision_number: initialProperty?.subdivision_number || '',
+    patta_number: initialProperty?.patta_number || '',
     owner_declaration: isEditMode ? true : false,
     // Location
-    address: initialProperty?.location?.split(',')?.[0]?.trim() || '',
+    address: initialProperty?.address || initialProperty?.location?.split(',')?.[0]?.trim() || '',
     village: '',
     city: initialProperty?.city || '',
     state: initialProperty?.state || 'Tamil Nadu',
@@ -120,6 +137,7 @@ export default function AddPropertyForm({
       : (initialProperty?.image ? [initialProperty.image] : []),
     cover_index: 0,
     // Documents
+    document_id: initialProperty?.document_id || null,
     documents: Array.isArray(initialProperty?.documents) ? initialProperty.documents : [],
   });
 
@@ -128,11 +146,118 @@ export default function AddPropertyForm({
     setFieldErrors((prev) => ({ ...prev, [key]: '' }));
   };
 
+  // Helper to run live document verification against property data
+  const runDocumentVerification = async (docId, currentForm = form) => {
+    if (!docId) return null;
+    setVerifyingDoc(true);
+    try {
+      const token = localStorage.getItem('landai_token');
+      const locationStr = [currentForm.address, currentForm.village, currentForm.city, currentForm.state]
+        .filter(Boolean)
+        .join(', ');
+
+      const res = await fetch(apiUrl('/api/properties/verify-document'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          document_id: docId,
+          property_data: {
+            id: initialProperty?.id,
+            title: currentForm.title,
+            owner_name: currentForm.owner_name,
+            survey_number: currentForm.survey_number,
+            subdivision_number: currentForm.subdivision_number,
+            patta_number: currentForm.patta_number,
+            location: locationStr,
+            address: currentForm.address,
+            city: currentForm.city,
+            state: currentForm.state,
+            area: Number(currentForm.area) || 0,
+            area_unit: currentForm.area_unit,
+            price: Number(currentForm.price) || 0,
+          },
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setVerificationReport(data);
+        setVerificationStatus(data.overall_status);
+        return data;
+      } else {
+        if (data.report) {
+          setVerificationReport(data.report);
+          setVerificationStatus(data.report.overall_status || 'REJECTED');
+        }
+      }
+    } catch (err) {
+      console.warn('Document verification check error:', err);
+    } finally {
+      setVerifyingDoc(false);
+    }
+    return null;
+  };
+
+  // One-click Auto-Fill from verified document
+  const handleAutoFillFromDocument = (docEntry) => {
+    const fields = docEntry?.fields || verificationReport?.extracted_fields || {};
+    const newForm = { ...form };
+
+    const getVal = (v) => {
+      if (!v) return '';
+      if (typeof v === 'string') return v;
+      if (typeof v === 'object' && v.value != null) return String(v.value);
+      return '';
+    };
+
+    const docSurvey = getVal(fields.survey_number);
+    const docSubdiv = getVal(fields.subdivision_number);
+    const docPatta = getVal(fields.patta_number);
+    const docOwner = getVal(fields.owner_name);
+    const docArea = getVal(fields.land_area);
+    const docVillage = getVal(fields.village);
+    const docDistrict = getVal(fields.district);
+
+    if (docSurvey) newForm.survey_number = docSurvey;
+    if (docSubdiv) newForm.subdivision_number = docSubdiv;
+    if (docPatta) newForm.patta_number = docPatta;
+    if (docOwner) newForm.owner_name = docOwner;
+
+    if (docArea) {
+      const match = String(docArea).match(/([\d,]+(?:\.\d+)?)\s*([a-zA-Z\u0B80-\u0BFF\.\s]*)/);
+      if (match) {
+        newForm.area = match[1].replace(/,/g, '');
+        const u = match[2].trim().toLowerCase();
+        if (u.includes('cent') || u.includes('சென்ட்')) newForm.area_unit = 'cents';
+        else if (u.includes('acre') || u.includes('ஏக்கர்')) newForm.area_unit = 'acres';
+        else if (u.includes('ground')) newForm.area_unit = 'grounds';
+        else if (u.includes('sq.m') || u.includes('sqm')) newForm.area_unit = 'sq.m';
+        else newForm.area_unit = 'sq.ft';
+      }
+    }
+
+    if (docVillage && !newForm.village) newForm.village = docVillage;
+    if (docDistrict) newForm.city = docDistrict;
+
+    setForm(newForm);
+
+    const targetDocId = docEntry?.id || form.document_id || form.documents?.[0]?.id;
+    if (targetDocId) {
+      runDocumentVerification(targetDocId, newForm);
+    }
+  };
+
   const validateStep = (stepId) => {
     const errors = {};
     if (stepId === 'basic') {
       if (!form.title.trim()) errors.title = 'Property title is required.';
       if (!form.description.trim()) errors.description = 'Description is required.';
+      if (!form.owner_name.trim()) errors.owner_name = 'Owner name is required (as recorded in land document).';
+      if (!form.survey_number.trim()) errors.survey_number = 'Survey number is required.';
       if (!form.owner_declaration) errors.owner_declaration = 'You must confirm ownership or authorization.';
     }
     if (stepId === 'location') {
@@ -143,6 +268,15 @@ export default function AddPropertyForm({
     if (stepId === 'pricing') {
       if (!form.price || Number(form.price) <= 0) errors.price = 'A valid asking price is required.';
       if (!form.area || Number(form.area) <= 0) errors.area = 'A valid land area is required.';
+    }
+    if (stepId === 'documents') {
+      if (!form.documents || form.documents.length === 0) {
+        errors.documents = 'Mandatory land ownership document is required. Please upload your document.';
+        setGlobalError('You must upload your land ownership document before posting a property.');
+      } else if (verificationStatus === 'REJECTED') {
+        errors.documents = 'The uploaded document failed verification. Please upload a readable, valid document.';
+        setGlobalError('The uploaded document failed verification. Please ensure you upload a valid, readable land ownership document.');
+      }
     }
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
@@ -220,14 +354,14 @@ export default function AddPropertyForm({
     }
   };
 
-  // --- Supporting Document Handlers (OCR Integration) ---
+  // --- Supporting Document Handlers (Strict OCR & Verification) ---
   const handleDocFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setGlobalError('');
     setUploadingDoc(true);
-    setDocProcessMsg('Uploading supporting document...');
+    setDocProcessMsg('Uploading and encrypting land document...');
 
     const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
     const validExtensions = /\.(pdf|jpe?g|png)$/i;
@@ -251,7 +385,7 @@ export default function AddPropertyForm({
       formData.append('language', docLanguage);
       formData.append('document_type', docType);
 
-      // Step 1: Upload
+      // Step 1: Upload to secure repository
       const upRes = await fetch(apiUrl('/api/documents/upload'), {
         method: 'POST',
         headers: {
@@ -264,7 +398,10 @@ export default function AddPropertyForm({
       const upData = await upRes.json().catch(() => ({}));
       if (!upRes.ok) throw new Error(upData.error || 'Document upload failed.');
 
-      setDocProcessMsg('Running bilingual OCR text extraction...');
+      const uploadedDocId = upData.local_id ?? upData.id ?? upData.document_id;
+      set('document_id', uploadedDocId);
+
+      setDocProcessMsg('Executing bilingual Tamil + English OCR parsing...');
 
       // Step 2: OCR Process
       let procData = null;
@@ -276,52 +413,42 @@ export default function AddPropertyForm({
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           credentials: 'include',
-          body: JSON.stringify({ document_id: upData.local_id ?? upData.id ?? upData.document_id }),
+          body: JSON.stringify({ document_id: uploadedDocId }),
         });
         if (procRes.ok) {
           procData = await procRes.json();
         }
-      } catch {
-        // OCR fallback if service offline
+      } catch (err) {
+        console.warn('OCR processing notice:', err);
       }
 
-      setDocProcessMsg('Running legal consistency checks...');
-
-      // Step 3: Validate
-      let valData = null;
-      try {
-        const docId = upData.local_id ?? upData.id ?? upData.document_id;
-        const valRes = await fetch(apiUrl(`/api/documents/${docId}/validate`), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          credentials: 'include',
-          body: JSON.stringify({}),
-        });
-        if (valRes.ok) {
-          valData = await valRes.json();
-        }
-      } catch {
-        // fallback
-      }
+      setDocProcessMsg('Running strict document consistency & ownership checks...');
 
       const extractedFields = procData?.fields || upData?.fields || {};
       const newDocEntry = {
-        id: upData.local_id || Date.now(),
+        id: uploadedDocId,
         name: file.name,
         type: docType,
         language: docLanguage,
-        status: valData ? 'Validated' : procData ? 'Processed' : 'Uploaded',
+        status: procData ? 'Processed' : 'Uploaded',
         fields: extractedFields,
-        warnings: valData?.warnings || [],
-        consistency: valData?.is_consistent ? 'Consistent' : 'Review Required',
-        review_note: 'Uploaded document attached for technical verification.',
         uploaded_at: new Date().toISOString(),
       };
 
-      set('documents', [...form.documents, newDocEntry]);
+      const updatedDocs = [newDocEntry];
+      set('documents', updatedDocs);
+
+      // Step 3: Run Strict Property-Document Verification
+      const rep = await runDocumentVerification(uploadedDocId, {
+        ...form,
+        document_id: uploadedDocId,
+        documents: updatedDocs,
+      });
+
+      if (rep) {
+        newDocEntry.verification_status = rep.overall_status;
+        newDocEntry.verification_report = rep;
+      }
     } catch (err) {
       setGlobalError(err.message || 'Failed to process document.');
     } finally {
@@ -332,16 +459,35 @@ export default function AddPropertyForm({
   };
 
   const handleRemoveDoc = (idx) => {
-    set('documents', form.documents.filter((_, i) => i !== idx));
+    const remaining = form.documents.filter((_, i) => i !== idx);
+    set('documents', remaining);
+    if (remaining.length === 0) {
+      set('document_id', null);
+      setVerificationReport(null);
+      setVerificationStatus('PENDING');
+    } else {
+      set('document_id', remaining[0].id);
+      runDocumentVerification(remaining[0].id);
+    }
   };
 
   // --- Submit / Save Handler ---
   const handleSubmit = async (listing_status) => {
-    // Validate required steps (basic, location, pricing)
-    for (const s of ['basic', 'location', 'pricing']) {
+    // Validate required steps (basic, location, pricing, documents)
+    for (const s of ['basic', 'location', 'pricing', 'documents']) {
       if (!validateStep(s)) {
         const failIdx = STEPS.findIndex((x) => x.id === s);
         setStep(failIdx);
+        return;
+      }
+    }
+
+    // Strict Rule: Block publishing if verification not VERIFIED
+    if (listing_status === 'Published') {
+      if (verificationStatus !== 'VERIFIED') {
+        setGlobalError(
+          'Your property cannot be published because some information in your land document does not match the property details. Please correct the highlighted information and upload the required document again.'
+        );
         return;
       }
     }
@@ -366,9 +512,16 @@ export default function AddPropertyForm({
         .filter(Boolean)
         .join(', ');
 
+      const primaryDocId = form.document_id || form.documents?.[0]?.id;
+
       const payload = {
         title: form.title.trim(),
+        owner_name: form.owner_name.trim(),
+        survey_number: form.survey_number.trim(),
+        subdivision_number: form.subdivision_number.trim(),
+        patta_number: form.patta_number.trim(),
         location: locationStr,
+        address: form.address.trim(),
         city: form.city.trim(),
         state: form.state.trim(),
         price: Number(form.price),
@@ -386,6 +539,7 @@ export default function AddPropertyForm({
         bedrooms: form.bedrooms ? Number(form.bedrooms) : 0,
         bathrooms: form.bathrooms ? Number(form.bathrooms) : 0,
         listing_status,
+        document_id: primaryDocId,
         documents: form.documents,
       };
 
@@ -403,7 +557,13 @@ export default function AddPropertyForm({
       });
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Failed to save listing.');
+      if (!res.ok) {
+        if (data.report) {
+          setVerificationReport(data.report);
+          setVerificationStatus(data.report.overall_status);
+        }
+        throw new Error(data.error || 'Failed to save listing.');
+      }
 
       onPropertyCreated(data.property, listing_status);
     } catch (err) {
@@ -460,7 +620,7 @@ export default function AddPropertyForm({
 
         {/* Step Content */}
         <div className="apf-step-content">
-          {/* SECTION A: Basic Info */}
+          {/* SECTION A: Basic Info & Legal */}
           {currentStep.id === 'basic' && (
             <div className="apf-step-body animate-fade">
               <Field label="Property Title *" error={fieldErrors.title}>
@@ -498,6 +658,53 @@ export default function AddPropertyForm({
                 </Field>
               </div>
 
+              {/* Legal Title Information */}
+              <div className="apf-two-col">
+                <Field label="Land Owner Name * (as per Title Deed / Patta)" error={fieldErrors.owner_name}>
+                  <input
+                    id="apf-owner-name"
+                    type="text"
+                    value={form.owner_name}
+                    onChange={(e) => set('owner_name', e.target.value)}
+                    placeholder="e.g. K. Senthil Nathan"
+                    className={fieldErrors.owner_name ? 'field-error' : ''}
+                  />
+                </Field>
+
+                <Field label="Survey Number *" error={fieldErrors.survey_number}>
+                  <input
+                    id="apf-survey-no"
+                    type="text"
+                    value={form.survey_number}
+                    onChange={(e) => set('survey_number', e.target.value)}
+                    placeholder="e.g. 142/3A or 42/1B"
+                    className={fieldErrors.survey_number ? 'field-error' : ''}
+                  />
+                </Field>
+              </div>
+
+              <div className="apf-two-col">
+                <Field label="Subdivision Code (optional)">
+                  <input
+                    id="apf-subdiv-no"
+                    type="text"
+                    value={form.subdivision_number}
+                    onChange={(e) => set('subdivision_number', e.target.value)}
+                    placeholder="e.g. 3A or 1B"
+                  />
+                </Field>
+
+                <Field label="Patta / Document Registration Number (optional)">
+                  <input
+                    id="apf-patta-no"
+                    type="text"
+                    value={form.patta_number}
+                    onChange={(e) => set('patta_number', e.target.value)}
+                    placeholder="e.g. Patta 4892 or Doc 1824/2022"
+                  />
+                </Field>
+              </div>
+
               <Field label="Short Overview / Summary *" error={fieldErrors.description}>
                 <input
                   id="apf-description"
@@ -512,7 +719,7 @@ export default function AddPropertyForm({
               <Field label="Full Property Description (optional)">
                 <textarea
                   id="apf-description-long"
-                  rows={4}
+                  rows={3}
                   value={form.description_long}
                   onChange={(e) => set('description_long', e.target.value)}
                   placeholder="Provide comprehensive details on zoning, boundary dimensions, neighborhood amenities, water supply, and approach road condition..."
@@ -547,78 +754,80 @@ export default function AddPropertyForm({
                   type="text"
                   value={form.address}
                   onChange={(e) => set('address', e.target.value)}
-                  placeholder="e.g. Survey No. 42/1B, Avinashi Main Road"
+                  placeholder="e.g. Survey No. 142/3A, OMR Road"
                   className={fieldErrors.address ? 'field-error' : ''}
                 />
               </Field>
 
-              <Field label="Village / Locality Name (optional)">
-                <input
-                  id="apf-village"
-                  type="text"
-                  value={form.village}
-                  onChange={(e) => set('village', e.target.value)}
-                  placeholder="e.g. Neelambur Village"
-                />
-              </Field>
-
               <div className="apf-two-col">
-                <Field label="City / District *" error={fieldErrors.city}>
+                <Field label="Village / Revenue Taluk (optional)">
+                  <input
+                    id="apf-village"
+                    type="text"
+                    value={form.village}
+                    onChange={(e) => set('village', e.target.value)}
+                    placeholder="e.g. Sholinganallur"
+                  />
+                </Field>
+
+                <Field label="City / Revenue District *" error={fieldErrors.city}>
                   <input
                     id="apf-city"
                     type="text"
                     value={form.city}
                     onChange={(e) => set('city', e.target.value)}
-                    placeholder="e.g. Coimbatore"
+                    placeholder="e.g. Chennai or Chengalpattu"
                     className={fieldErrors.city ? 'field-error' : ''}
                   />
                 </Field>
+              </div>
+
+              <div className="apf-two-col">
                 <Field label="State *" error={fieldErrors.state}>
                   <input
                     id="apf-state"
                     type="text"
                     value={form.state}
                     onChange={(e) => set('state', e.target.value)}
-                    placeholder="e.g. Tamil Nadu"
+                    placeholder="Tamil Nadu"
                     className={fieldErrors.state ? 'field-error' : ''}
                   />
                 </Field>
-              </div>
 
-              <Field label="Postal Code (optional)">
-                <input
-                  id="apf-postal"
-                  type="text"
-                  value={form.postal_code}
-                  onChange={(e) => set('postal_code', e.target.value)}
-                  placeholder="641001"
-                  maxLength={6}
-                />
-              </Field>
-
-              <div className="apf-location-note">
-                <MapPin size={13} />
-                <span>GPS coordinates are optional. Buyers can contact you to confirm the exact location.</span>
+                <Field label="Postal / PIN Code">
+                  <input
+                    id="apf-postal"
+                    type="text"
+                    value={form.postal_code}
+                    onChange={(e) => set('postal_code', e.target.value)}
+                    placeholder="e.g. 600119"
+                  />
+                </Field>
               </div>
 
               <div className="apf-two-col">
-                <Field label="GPS Latitude (optional)">
-                  <input
-                    id="apf-lat"
-                    type="text"
-                    value={form.gps_lat}
-                    onChange={(e) => set('gps_lat', e.target.value)}
-                    placeholder="11.0168"
-                  />
+                <Field label="Facing">
+                  <select
+                    id="apf-facing"
+                    value={form.facing}
+                    onChange={(e) => set('facing', e.target.value)}
+                  >
+                    {FACING_OPTIONS.map((f) => (
+                      <option key={f} value={f}>{f || '(Select facing)'}</option>
+                    ))}
+                  </select>
                 </Field>
-                <Field label="GPS Longitude (optional)">
-                  <input
-                    id="apf-lng"
-                    type="text"
-                    value={form.gps_lng}
-                    onChange={(e) => set('gps_lng', e.target.value)}
-                    placeholder="76.9558"
-                  />
+
+                <Field label="Road Access Width">
+                  <select
+                    id="apf-road-access"
+                    value={form.road_access}
+                    onChange={(e) => set('road_access', e.target.value)}
+                  >
+                    {ROAD_ACCESS_OPTIONS.map((r) => (
+                      <option key={r} value={r}>{r || '(Select road width)'}</option>
+                    ))}
+                  </select>
                 </Field>
               </div>
             </div>
@@ -627,123 +836,68 @@ export default function AddPropertyForm({
           {/* SECTION C: Price & Area */}
           {currentStep.id === 'pricing' && (
             <div className="apf-step-body animate-fade">
-              <Field label="Asking Price (₹ INR) *" error={fieldErrors.price}>
-                <input
-                  id="apf-price"
-                  type="number"
-                  value={form.price}
-                  onChange={(e) => set('price', e.target.value)}
-                  placeholder="4500000"
-                  min={1}
-                  className={fieldErrors.price ? 'field-error' : ''}
-                />
-                {form.price > 0 && (
-                  <span className="apf-price-preview">
-                    {Number(form.price) >= 10000000
-                      ? `₹${(Number(form.price) / 10000000).toFixed(2)} Crore`
-                      : Number(form.price) >= 100000
-                      ? `₹${(Number(form.price) / 100000).toFixed(2)} Lakh`
-                      : `₹${Number(form.price).toLocaleString('en-IN')}`}
-                  </span>
-                )}
-              </Field>
-
               <div className="apf-two-col">
-                <Field label="Land Area *" error={fieldErrors.area}>
-                  <input
-                    id="apf-area"
-                    type="number"
-                    value={form.area}
-                    onChange={(e) => set('area', e.target.value)}
-                    placeholder="1500"
-                    min={1}
-                    className={fieldErrors.area ? 'field-error' : ''}
-                  />
+                <Field label="Asking Price (₹) *" error={fieldErrors.price}>
+                  <div className="apf-input-prefix">
+                    <span>₹</span>
+                    <input
+                      id="apf-price"
+                      type="number"
+                      min="1"
+                      value={form.price}
+                      onChange={(e) => set('price', e.target.value)}
+                      placeholder="e.g. 4800000"
+                      className={fieldErrors.price ? 'field-error' : ''}
+                    />
+                  </div>
                 </Field>
-                <Field label="Area Unit">
-                  <select
-                    id="apf-area-unit"
-                    value={form.area_unit}
-                    onChange={(e) => set('area_unit', e.target.value)}
-                  >
-                    {AREA_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                </Field>
+
+                <div className="apf-area-row">
+                  <Field label="Land Area *" error={fieldErrors.area}>
+                    <input
+                      id="apf-area"
+                      type="number"
+                      min="1"
+                      step="any"
+                      value={form.area}
+                      onChange={(e) => set('area', e.target.value)}
+                      placeholder="e.g. 2400"
+                      className={fieldErrors.area ? 'field-error' : ''}
+                    />
+                  </Field>
+
+                  <Field label="Unit">
+                    <select
+                      id="apf-area-unit"
+                      value={form.area_unit}
+                      onChange={(e) => set('area_unit', e.target.value)}
+                    >
+                      {AREA_UNITS.map((u) => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
               </div>
 
-              <Field label="Built-up Area (optional)">
-                <input
-                  id="apf-builtup"
-                  type="number"
-                  value={form.built_up_area}
-                  onChange={(e) => set('built_up_area', e.target.value)}
-                  placeholder="Leave blank if raw plot/land"
-                  min={0}
-                />
-              </Field>
+              {form.price && form.area && Number(form.area) > 0 && (
+                <div className="apf-rate-calc">
+                  <span>Calculated Rate:</span>
+                  <strong>
+                    ₹{Math.round(Number(form.price) / Number(form.area)).toLocaleString('en-IN')} per {form.area_unit}
+                  </strong>
+                </div>
+              )}
 
-              <div className="apf-two-col">
-                <Field label="Bedrooms (optional)">
-                  <select
-                    id="apf-bedrooms"
-                    value={form.bedrooms}
-                    onChange={(e) => set('bedrooms', e.target.value)}
-                  >
-                    <option value="">N/A (Plot/Land)</option>
-                    {[1,2,3,4,5,6].map((n) => <option key={n} value={n}>{n} BHK</option>)}
-                    <option value="7">7+</option>
-                  </select>
-                </Field>
-                <Field label="Bathrooms (optional)">
-                  <select
-                    id="apf-bathrooms"
-                    value={form.bathrooms}
-                    onChange={(e) => set('bathrooms', e.target.value)}
-                  >
-                    <option value="">N/A</option>
-                    {[1,2,3,4,5].map((n) => <option key={n} value={n}>{n}</option>)}
-                    <option value="6">6+</option>
-                  </select>
-                </Field>
-              </div>
-
-              <div className="apf-two-col">
-                <Field label="Road Access">
-                  <select
-                    id="apf-road"
-                    value={form.road_access}
-                    onChange={(e) => set('road_access', e.target.value)}
-                  >
-                    {ROAD_ACCESS_OPTIONS.map((r) => <option key={r} value={r}>{r || 'Not specified'}</option>)}
-                  </select>
-                </Field>
-                <Field label="Facing Direction">
-                  <select
-                    id="apf-facing"
-                    value={form.facing}
-                    onChange={(e) => set('facing', e.target.value)}
-                  >
-                    {FACING_OPTIONS.map((f) => <option key={f} value={f}>{f || 'Not specified'}</option>)}
-                  </select>
-                </Field>
-              </div>
-
-              <Field label="Feature Highlights / Tags (comma separated)">
+              <Field label="Search Tags / Highlights (comma-separated)">
                 <input
                   id="apf-tags"
                   type="text"
                   value={form.tags}
                   onChange={(e) => set('tags', e.target.value)}
-                  placeholder="DTCP Approved, East-facing, Clear Title, 40 ft road"
+                  placeholder="DTCP Approved, Corner Plot, Clear Title, Direct Owner"
                 />
               </Field>
-
-              {form.price > 0 && form.area > 0 && (
-                <div className="apf-rate-calc">
-                  <span>Price per {form.area_unit}:</span>
-                  <strong>₹{Math.round(Number(form.price) / Number(form.area)).toLocaleString('en-IN')} / {form.area_unit}</strong>
-                </div>
-              )}
             </div>
           )}
 
@@ -751,11 +905,10 @@ export default function AddPropertyForm({
           {currentStep.id === 'photos' && (
             <div className="apf-step-body animate-fade">
               <div className="apf-photos-info">
-                <ImageIcon size={16} />
-                <span>Upload property photos or provide web URLs. The marked cover photo will be displayed on marketplace search cards.</span>
+                <Info size={15} />
+                <span>Upload authentic photos of the plot, approach road, boundary stones, and surrounding views.</span>
               </div>
 
-              {/* Direct File Upload Drop Area */}
               <div
                 className="apf-photo-upload-dropzone"
                 onClick={() => imageFileInputRef.current?.click()}
@@ -768,31 +921,33 @@ export default function AddPropertyForm({
                   accept="image/jpeg,image/png,image/webp,image/jpg"
                   style={{ display: 'none' }}
                 />
-                <UploadCloud size={28} />
+                <UploadCloud size={24} />
                 <div>
-                  <strong>Click to browse and upload photographs</strong>
-                  <p>Supports JPG, PNG, and WebP (up to 10 MB each)</p>
+                  <strong>Click to upload photos</strong>
+                  <p>JPG, PNG, or WebP up to 10 MB each. You can select multiple photos.</p>
                 </div>
               </div>
 
               {uploadingImage && (
                 <div className="apf-upload-progress-row">
-                  <RefreshCw size={14} className="spin-icon" />
                   <span>Uploading photos... {imageUploadProgress}%</span>
                   <div className="apf-progress-track">
-                    <div className="apf-progress-bar" style={{ width: `${imageUploadProgress}%` }} />
+                    <div
+                      className="apf-progress-bar"
+                      style={{ width: `${imageUploadProgress}%` }}
+                    />
                   </div>
                 </div>
               )}
 
-              {/* Add by URL */}
               <div className="apf-add-image-row">
                 <input
                   id="apf-img-url"
                   type="url"
-                  placeholder="Or paste an image URL (https://images.unsplash.com/...)"
+                  placeholder="Or paste an image URL (https://...)"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
+                      e.preventDefault();
                       handleImageUrlAdd(e.target.value);
                       e.target.value = '';
                     }
@@ -870,15 +1025,15 @@ export default function AddPropertyForm({
             </div>
           )}
 
-          {/* SECTION E: Property Documents & OCR */}
+          {/* SECTION E: Mandatory Land Document & Verification */}
           {currentStep.id === 'documents' && (
             <div className="apf-step-body animate-fade">
               <div className="apf-documents-banner">
                 <FileCheck2 size={18} />
                 <div>
-                  <strong>Supporting Title Deeds &amp; Land Records</strong>
+                  <strong>Mandatory Land Ownership Document Verification</strong>
                   <p>
-                    Attach Patta, Chitta, Sale Deed, or Encumbrance Certificates (EC). Documents are processed via the bilingual OCR module for automated survey number and ownership consistency checks.
+                    Uploading your land ownership document is mandatory. The system automatically performs bilingual OCR (Tamil + English) and verifies Survey Numbers, Owner Name, Land Area, and Location consistency before publication is allowed.
                   </p>
                 </div>
               </div>
@@ -886,14 +1041,14 @@ export default function AddPropertyForm({
               {/* Upload Controls */}
               <div className="apf-doc-controls-box">
                 <div className="apf-two-col">
-                  <Field label="Document Category">
+                  <Field label="Document Category *">
                     <select
                       id="apf-doc-type"
                       value={docType}
                       onChange={(e) => setDocType(e.target.value)}
                     >
-                      <option value="patta">Patta / Chitta Record</option>
-                      <option value="deed">Parent Sale Deed</option>
+                      <option value="patta">Patta / Chitta Record (பட்டா)</option>
+                      <option value="deed">Parent Sale Deed (கிரய பத்திரம்)</option>
                       <option value="ec">Encumbrance Certificate (EC)</option>
                       <option value="fmb">Field Measurement Book (FMB)</option>
                       <option value="layout">Approved Layout Copy</option>
@@ -926,8 +1081,8 @@ export default function AddPropertyForm({
                   />
                   <UploadCloud size={24} />
                   <div>
-                    <strong>Upload Supporting Document File</strong>
-                    <p>PDF or scanned image (up to 50 MB) — automatically queued for OCR inspection</p>
+                    <strong>Upload Land Ownership Document File (Required) *</strong>
+                    <p>PDF, JPG, JPEG, or PNG (up to 4.5 MB) — automatically verified via OCR engine</p>
                   </div>
                 </div>
 
@@ -939,16 +1094,10 @@ export default function AddPropertyForm({
                 )}
               </div>
 
-              {/* Uploaded Documents List */}
-              <div className="apf-doc-list-section">
-                <h4>Attached Documents ({form.documents.length})</h4>
-
-                {form.documents.length === 0 ? (
-                  <div className="apf-docs-empty">
-                    <FileText size={24} />
-                    <p>No documents attached yet. You can still publish; documents can be added later or verified upon buyer inquiry.</p>
-                  </div>
-                ) : (
+              {/* Uploaded Document List Card */}
+              {form.documents.length > 0 && (
+                <div className="apf-doc-list-section">
+                  <h4>Attached Land Document</h4>
                   <div className="apf-docs-grid">
                     {form.documents.map((doc, idx) => (
                       <div key={idx} className="apf-doc-card">
@@ -957,7 +1106,7 @@ export default function AddPropertyForm({
                             <FileCheck2 size={16} />
                             <div>
                               <strong>{doc.name}</strong>
-                              <span className="apf-doc-type-pill">{doc.type.toUpperCase()}</span>
+                              <span className="apf-doc-type-pill">{doc.type?.toUpperCase()}</span>
                             </div>
                           </div>
                           <button
@@ -969,56 +1118,122 @@ export default function AddPropertyForm({
                             <Trash2 size={13} />
                           </button>
                         </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-                        <div className="apf-doc-status-line">
-                          <span className={`status-tag ${doc.status === 'Validated' ? 'valid' : 'pending'}`}>
-                            {doc.status}
-                          </span>
-                          <span className="consistency-tag">{doc.consistency}</span>
-                        </div>
+              {/* Document Verification Report Card */}
+              {verificationReport && (
+                <div className="apf-verification-report-card">
+                  <div className="apf-vr-header">
+                    <div className="apf-vr-title">
+                      <ShieldCheck size={18} />
+                      <span>Document Verification Report</span>
+                    </div>
+                    <span className={`apf-vr-badge status-${(verificationStatus || 'pending').toLowerCase()}`}>
+                      {verificationStatus === 'VERIFIED' ? (
+                        <><Check size={12} /> VERIFIED</>
+                      ) : verificationStatus === 'NEEDS_CORRECTION' ? (
+                        <><AlertCircle size={12} /> NEEDS CORRECTION</>
+                      ) : verificationStatus === 'REJECTED' ? (
+                        <><X size={12} /> REJECTED</>
+                      ) : (
+                        <><RefreshCw size={12} className="spin-icon" /> PENDING</>
+                      )}
+                    </span>
+                  </div>
 
-                        {/* Extracted Fields Preview */}
-                        {doc.fields && Object.keys(doc.fields).length > 0 && (
-                          <div className="apf-doc-extracted-fields">
-                            <span className="fields-title">Extracted Metadata:</span>
-                            <div className="fields-grid">
-                              {doc.fields.survey_number && (
-                                <div className="field-pair">
-                                  <span>Survey No:</span>
-                                  <strong>{doc.fields.survey_number}</strong>
-                                </div>
-                              )}
-                              {doc.fields.patta_number && (
-                                <div className="field-pair">
-                                  <span>Patta No:</span>
-                                  <strong>{doc.fields.patta_number}</strong>
-                                </div>
-                              )}
-                              {doc.fields.district && (
-                                <div className="field-pair">
-                                  <span>District:</span>
-                                  <strong>{doc.fields.district}</strong>
-                                </div>
-                              )}
-                              {doc.fields.owner_name && (
-                                <div className="field-pair">
-                                  <span>Owner:</span>
-                                  <strong>{doc.fields.owner_name}</strong>
-                                </div>
-                              )}
-                            </div>
-                          </div>
+                  {/* Verification Banner Message */}
+                  <div className={`apf-vr-banner-msg msg-${(verificationStatus || 'pending').toLowerCase()}`}>
+                    {verificationStatus === 'VERIFIED' ? (
+                      <CheckCircle2 size={16} />
+                    ) : (
+                      <AlertCircle size={16} />
+                    )}
+                    <div>{verificationReport.message}</div>
+                  </div>
+
+                  {/* Verification Checklist */}
+                  <div className="apf-vr-checklist">
+                    {verificationReport.checks && verificationReport.checks.map((c, i) => (
+                      <div key={i} className={`apf-vr-check-item ${c.status}`}>
+                        {c.status === 'pass' ? (
+                          <CheckCircle2 size={14} />
+                        ) : c.status === 'fail' ? (
+                          <X size={14} />
+                        ) : (
+                          <AlertCircle size={14} />
                         )}
-
-                        <div className="apf-doc-review-disclaimer">
-                          <Info size={11} />
-                          <span>Technical consistency check performed. Physical deed verification required at SRO.</span>
+                        <div>
+                          <span className="apf-vr-check-title">{c.title}</span>
+                          <span className="apf-vr-check-detail">— {c.detail}</span>
                         </div>
                       </div>
                     ))}
                   </div>
-                )}
-              </div>
+
+                  {/* Information Discrepancies Table */}
+                  {verificationReport.discrepancies && verificationReport.discrepancies.length > 0 && (
+                    <div className="apf-vr-discrepancies">
+                      <div className="apf-vr-discrepancy-header">
+                        <AlertTriangle size={14} />
+                        <span>Information Discrepancies Requiring Correction:</span>
+                      </div>
+                      <table className="apf-discrepancy-table">
+                        <thead>
+                          <tr>
+                            <th>Field</th>
+                            <th>Entered in Listing</th>
+                            <th>Document Value</th>
+                            <th>Status / Correction</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {verificationReport.discrepancies.map((d, i) => (
+                            <tr key={i}>
+                              <td><strong>{d.field?.replace(/_/g, ' ').toUpperCase()}</strong></td>
+                              <td><span style={{ color: '#DC2626' }}>{d.actual || '(Empty)'}</span></td>
+                              <td><span style={{ color: '#059669', fontWeight: 600 }}>{d.expected || 'N/A'}</span></td>
+                              <td>{d.message}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+
+                      <div className="apf-vr-actions">
+                        <button
+                          type="button"
+                          className="apf-sync-btn"
+                          onClick={() => handleAutoFillFromDocument(form.documents?.[0])}
+                          title="Automatically copy detected fields from document into property listing"
+                        >
+                          <Sparkles size={13} />
+                          <span>Auto-sync Details from Document</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="apf-reverify-btn"
+                          onClick={() => runDocumentVerification(form.documents?.[0]?.id, form)}
+                          disabled={verifyingDoc}
+                        >
+                          <RefreshCw size={13} className={verifyingDoc ? "spin-icon" : ""} />
+                          <span>Re-verify Details</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {form.documents.length === 0 && (
+                <div className="apf-docs-empty">
+                  <FileText size={24} />
+                  <p>No document attached yet. Uploading your land ownership document is mandatory to proceed with property publication.</p>
+                </div>
+              )}
             </div>
           )}
 
@@ -1054,34 +1269,68 @@ export default function AddPropertyForm({
                       </>
                     )}
                   </div>
-                  <p className="apf-review-desc">{form.description || '(No description provided)'}</p>
 
-                  <div className="apf-review-tags">
-                    {form.tags.split(',').map((t, idx) => (
-                      <span key={idx} className="feature-tag">{t.trim()}</span>
-                    ))}
+                  <div className="apf-doc-status-line" style={{ marginTop: '6px' }}>
+                    <span className={`apf-vr-badge status-${(verificationStatus || 'pending').toLowerCase()}`}>
+                      <ShieldCheck size={11} /> {verificationStatus}
+                    </span>
+                    {form.survey_number && (
+                      <span className="consistency-tag">Survey No: {form.survey_number}</span>
+                    )}
+                    {form.owner_name && (
+                      <span className="consistency-tag">Owner: {form.owner_name}</span>
+                    )}
                   </div>
                 </div>
               </div>
 
-              {/* Documents & Photos summary counters */}
-              <div className="apf-review-summary-row">
-                <div className="summary-chip">
-                  <ImageIcon size={13} />
-                  <span>{form.images.length} {form.images.length === 1 ? 'Photo' : 'Photos'} attached</span>
+              {/* Prominent Verification Report in Review */}
+              {verificationReport && (
+                <div className="apf-verification-report-card">
+                  <div className="apf-vr-header">
+                    <div className="apf-vr-title">
+                      <ShieldCheck size={16} />
+                      <span>Document Verification Summary</span>
+                    </div>
+                    <span className={`apf-vr-badge status-${(verificationStatus || 'pending').toLowerCase()}`}>
+                      {verificationStatus}
+                    </span>
+                  </div>
+
+                  <div className={`apf-vr-banner-msg msg-${(verificationStatus || 'pending').toLowerCase()}`}>
+                    {verificationStatus === 'VERIFIED' ? (
+                      <CheckCircle2 size={15} />
+                    ) : (
+                      <AlertCircle size={15} />
+                    )}
+                    <div>{verificationReport.message}</div>
+                  </div>
                 </div>
-                <div className="summary-chip">
-                  <FileCheck2 size={13} />
-                  <span>{form.documents.length} {form.documents.length === 1 ? 'Document' : 'Documents'} processed</span>
+              )}
+
+              {/* Strict Notice if verification not passed */}
+              {verificationStatus !== 'VERIFIED' ? (
+                <div className="apf-publish-blocked-notice">
+                  <AlertCircle size={16} />
+                  <div>
+                    <strong>Publishing Blocked:</strong> Your property cannot be published because some information in your land document does not match the property details. Please correct the highlighted information in previous steps, or save as a draft to finish later.
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="apf-publish-verified-notice">
+                  <CheckCircle2 size={16} />
+                  <div>
+                    <strong>Verification Passed:</strong> All mandatory document checks have succeeded. Your property is verified and ready for publication in the public marketplace.
+                  </div>
+                </div>
+              )}
 
               {/* Publish Options */}
               <div className="apf-publish-options">
                 <div className="apf-publish-option-card" id="publish-draft">
                   <div>
                     <strong>Save as Draft</strong>
-                    <p>Save your listing privately. It will NOT appear in public marketplace search results until published.</p>
+                    <p>Save your listing privately. It will NOT appear in public marketplace search results until verified and published.</p>
                   </div>
                   <button
                     type="button"
@@ -1094,26 +1343,31 @@ export default function AddPropertyForm({
                   </button>
                 </div>
 
-                <div className="apf-publish-option-card highlighted" id="publish-live">
+                <div className={`apf-publish-option-card ${verificationStatus === 'VERIFIED' ? 'highlighted' : ''}`} id="publish-live">
                   <div>
                     <strong>Publish Property</strong>
-                    <p>Make your listing visible to all prospective buyers in the public marketplace immediately.</p>
+                    <p>
+                      {verificationStatus === 'VERIFIED'
+                        ? 'Make your verified property visible in the public marketplace immediately.'
+                        : 'Blocked: Land ownership document verification must be VERIFIED before publishing.'}
+                    </p>
                   </div>
                   <button
                     type="button"
-                    className="apf-option-btn publish"
+                    className={`apf-option-btn publish ${verificationStatus === 'VERIFIED' ? 'verified-ready' : ''}`}
                     onClick={() => handleSubmit('Published')}
-                    disabled={busy}
+                    disabled={busy || verificationStatus !== 'VERIFIED'}
+                    title={verificationStatus !== 'VERIFIED' ? 'Property posting is blocked until document verification is VERIFIED.' : 'Publish listing'}
                   >
                     <Globe size={14} />
-                    <span>{busy ? 'Publishing...' : isEditMode ? 'Save & Publish' : 'Publish Property'}</span>
+                    <span>{busy ? 'Publishing...' : verificationStatus === 'VERIFIED' ? 'Publish Verified Property' : 'Publishing Blocked'}</span>
                   </button>
                 </div>
               </div>
 
               <p className="apf-publish-disclaimer">
                 <FileText size={12} />
-                Published properties appear directly in public marketplace search. You can unpublish, edit, or remove listings at any time from your Seller Dashboard.
+                Strict Policy: Only verified properties with authentic title documents are published publicly on LandAI to protect buyers and sellers from fraud.
               </p>
             </div>
           )}

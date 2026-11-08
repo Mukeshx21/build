@@ -5617,6 +5617,263 @@ h1, h2, h3, h4, h5, p {
   margin: 16px 0;
 }
 
+/* ==========================================================================
+   Strict Land Document Verification Report Card
+   ========================================================================== */
+.apf-verification-report-card {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-white);
+  margin-top: 16px;
+  margin-bottom: 16px;
+}
+
+.apf-vr-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--color-subtle-hover);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.apf-vr-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-black);
+}
+
+.apf-vr-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.apf-vr-badge.status-verified {
+  background: #ECFDF5;
+  color: #047857;
+  border: 1px solid #A7F3D0;
+}
+
+.apf-vr-badge.status-needs_correction {
+  background: #FFFBEB;
+  color: #B45309;
+  border: 1px solid #FDE68A;
+}
+
+.apf-vr-badge.status-rejected {
+  background: #FEF2F2;
+  color: #B91C1C;
+  border: 1px solid #FECACA;
+}
+
+.apf-vr-badge.status-pending {
+  background: #EFF6FF;
+  color: #1D4ED8;
+  border: 1px solid #BFDBFE;
+}
+
+.apf-vr-banner-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  font-weight: 500;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.apf-vr-banner-msg.msg-verified {
+  background: #F0FDF4;
+  color: #166534;
+}
+
+.apf-vr-banner-msg.msg-needs_correction {
+  background: #FFFBEB;
+  color: #92400E;
+}
+
+.apf-vr-banner-msg.msg-rejected {
+  background: #FEF2F2;
+  color: #991B1B;
+}
+
+.apf-vr-banner-msg.msg-pending {
+  background: #F8FAFC;
+  color: #334155;
+}
+
+.apf-vr-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  background: #FAFBFD;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.apf-vr-check-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.apf-vr-check-item.pass svg {
+  color: #059669;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.apf-vr-check-item.fail svg {
+  color: #DC2626;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.apf-vr-check-item.warning svg {
+  color: #D97706;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.apf-vr-check-title {
+  font-weight: 600;
+  color: var(--color-black);
+}
+
+.apf-vr-check-detail {
+  color: var(--color-gray);
+  margin-left: 4px;
+}
+
+.apf-vr-discrepancies {
+  padding: 14px 16px;
+  background: var(--color-white);
+}
+
+.apf-vr-discrepancy-header {
+  font-size: 12px;
+  font-weight: 700;
+  color: #B91C1C;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.apf-discrepancy-table {
+  width: 100%;
+  font-size: 11.5px;
+  border-collapse: collapse;
+  margin-bottom: 10px;
+}
+
+.apf-discrepancy-table th {
+  text-align: left;
+  padding: 6px 8px;
+  background: #F1F5F9;
+  color: #475569;
+  font-weight: 600;
+  border: 1px solid #E2E8F0;
+}
+
+.apf-discrepancy-table td {
+  padding: 6px 8px;
+  border: 1px solid #E2E8F0;
+}
+
+.apf-vr-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.apf-sync-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: #0F172A;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.apf-sync-btn:hover {
+  background: #1E293B;
+}
+
+.apf-reverify-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: #FFFFFF;
+  color: #0F172A;
+  border: 1px solid #CBD5E1;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.apf-reverify-btn:hover {
+  background: #F8FAFC;
+}
+
+.apf-publish-blocked-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  border-radius: 6px;
+  color: #92400E;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.apf-publish-verified-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #F0FDF4;
+  border: 1px solid #BBF7D0;
+  border-radius: 6px;
+  color: #166534;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.apf-option-btn.publish.verified-ready {
+  background: #059669;
+}
+
+.apf-option-btn.publish.verified-ready:hover {
+  background: #047857;
+}
+
+
 .summary-chip {
   display: flex;
   align-items: center;

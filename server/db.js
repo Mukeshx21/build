@@ -224,6 +224,15 @@ db.exec(`
     listing_status TEXT DEFAULT 'Published',
     sample_label TEXT DEFAULT '',
     documents_json TEXT DEFAULT '[]',
+    survey_number TEXT DEFAULT '',
+    subdivision_number TEXT DEFAULT '',
+    patta_number TEXT DEFAULT '',
+    owner_name TEXT DEFAULT '',
+    document_id INTEGER DEFAULT NULL,
+    verification_status TEXT DEFAULT 'PENDING',
+    verification_report_json TEXT DEFAULT '{}',
+    document_hash TEXT DEFAULT '',
+    verified_at DATETIME DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
@@ -382,6 +391,15 @@ const propColMigrations = {
   longitude: "ALTER TABLE properties ADD COLUMN longitude REAL DEFAULT NULL",
   address: "ALTER TABLE properties ADD COLUMN address TEXT DEFAULT ''",
   sold_at: "ALTER TABLE properties ADD COLUMN sold_at DATETIME DEFAULT NULL",
+  survey_number: "ALTER TABLE properties ADD COLUMN survey_number TEXT DEFAULT ''",
+  subdivision_number: "ALTER TABLE properties ADD COLUMN subdivision_number TEXT DEFAULT ''",
+  patta_number: "ALTER TABLE properties ADD COLUMN patta_number TEXT DEFAULT ''",
+  owner_name: "ALTER TABLE properties ADD COLUMN owner_name TEXT DEFAULT ''",
+  document_id: "ALTER TABLE properties ADD COLUMN document_id INTEGER DEFAULT NULL",
+  verification_status: "ALTER TABLE properties ADD COLUMN verification_status TEXT DEFAULT 'PENDING'",
+  verification_report_json: "ALTER TABLE properties ADD COLUMN verification_report_json TEXT DEFAULT '{}'",
+  document_hash: "ALTER TABLE properties ADD COLUMN document_hash TEXT DEFAULT ''",
+  verified_at: "ALTER TABLE properties ADD COLUMN verified_at DATETIME DEFAULT NULL",
 };
 for (const [col, sql] of Object.entries(propColMigrations)) {
   if (!propertyColumns.includes(col)) {
@@ -392,6 +410,7 @@ for (const [col, sql] of Object.entries(propColMigrations)) {
 try {
   db.exec(`UPDATE properties SET listing_status = 'Published' WHERE listing_status IS NULL OR listing_status = ''`);
   db.exec(`UPDATE properties SET status = 'AVAILABLE' WHERE status = 'Active' OR status = 'available' OR status IS NULL OR status = ''`);
+  db.exec(`UPDATE properties SET verification_status = 'VERIFIED' WHERE (verified = 1 OR sample_label != '') AND (verification_status IS NULL OR verification_status = '' OR verification_status = 'PENDING')`);
   
   db.exec(`UPDATE properties SET latitude = 11.1396, longitude = 77.0392, address = 'Survey No. 42/1B, Kovilpalayam, Coimbatore, Tamil Nadu' WHERE location LIKE '%Kovilpalayam%' AND latitude IS NULL`);
   db.exec(`UPDATE properties SET latitude = 11.0264, longitude = 77.1245, address = 'Plot 18, Arterial Road, Sulur, Coimbatore, Tamil Nadu' WHERE location LIKE '%Sulur%' AND latitude IS NULL`);

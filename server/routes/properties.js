@@ -3,8 +3,9 @@ import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import db from "../db.js";
+import db, { logHistory } from "../db.js";
 import { authenticate, optionalAuthenticate, requireRole } from "../middleware/auth.js";
+import { verifyPropertyAgainstDocument } from "../services/documentVerification.js";
 
 import os from "node:os";
 
@@ -102,6 +103,14 @@ function formatProperty(row, { saved = false, reasons = [] } = {}) {
     image: row.image,
     images: safeParse(row.images_json, []),
     verified: Boolean(row.verified),
+    survey_number: row.survey_number || "",
+    subdivision_number: row.subdivision_number || "",
+    patta_number: row.patta_number || "",
+    owner_name: row.owner_name || "",
+    document_id: row.document_id || null,
+    verification_status: row.verification_status || (row.verified ? "VERIFIED" : "PENDING"),
+    verification_report: safeParse(row.verification_report_json, {}),
+    verified_at: row.verified_at || null,
     tags: safeParse(row.tags, []),
     description: row.description || "",
     description_long: row.description_long || "",
@@ -198,8 +207,9 @@ router.get("/properties", optionalAuthenticate, (req, res) => {
       clauses.push(`seller_id = ?`);
       params.push(req.user.id);
     } else {
-      // Public marketplace: only show Published listings (not drafts/unpublished/etc.)
+      // Public marketplace: only show Published listings that are strictly verified
       clauses.push(`(listing_status = 'Published' OR listing_status IS NULL OR listing_status = '')`);
+      clauses.push(`(verified = 1 OR sample_label != '')`);
     }
 
     if (q) {
@@ -483,6 +493,61 @@ router.post(
   },
 );
 
+// ─── VERIFY PROPERTY AGAINST DOCUMENT ────────────────────────────────────────
+
+router.post(
+  "/properties/verify-document",
+  authenticate,
+  requireRole("seller"),
+  (req, res) => {
+    try {
+      const { document_id, property_data = {} } = req.body || {};
+      if (!document_id) {
+        return res.status(400).json({
+          success: false,
+          error: "document_id is required.",
+          verification_status: "REJECTED",
+        });
+      }
+
+      const doc = db.prepare("SELECT * FROM documents WHERE id = ?").get(document_id);
+      if (!doc) {
+        return res.status(404).json({
+          success: false,
+          error: "Document record not found.",
+          verification_status: "REJECTED",
+        });
+      }
+      if (doc.user_id !== req.user.id) {
+        return res.status(403).json({
+          success: false,
+          error: "Access denied to this document.",
+          verification_status: "REJECTED",
+        });
+      }
+
+      const report = verifyPropertyAgainstDocument(
+        property_data,
+        doc,
+        req.user,
+        { existingPropertyId: property_data.id }
+      );
+
+      return res.json({
+        success: true,
+        ...report,
+      });
+    } catch (err) {
+      console.error("Verification endpoint error:", err);
+      return res.status(500).json({
+        success: false,
+        error: "Failed to verify document: " + err.message,
+        verification_status: "REJECTED",
+      });
+    }
+  },
+);
+
 // ─── CREATE PROPERTY ──────────────────────────────────────────────────────────
 
 router.post(
@@ -501,6 +566,11 @@ router.post(
         status = "AVAILABLE",
         listing_status = "Draft",
         documents = [],
+        survey_number = "",
+        subdivision_number = "",
+        patta_number = "",
+        owner_name = "",
+        document_id = null,
       } = req.body || {};
 
       if (!title || !location || price == null || area == null) {
@@ -509,15 +579,79 @@ router.post(
         });
       }
 
+      const documentArray = Array.isArray(documents) ? documents : [];
+      const primaryDocId = document_id || (documentArray[0] && (documentArray[0].id || documentArray[0].local_id || documentArray[0].document_id));
+
+      // Rule 1: Mandatory Document Upload
+      if (!primaryDocId || documentArray.length === 0) {
+        return res.status(400).json({
+          error: "Mandatory land document is required. You must upload your land ownership document before posting a property.",
+          verification_status: "REJECTED",
+          discrepancies: [{ field: "document", message: "Document upload is mandatory." }],
+        });
+      }
+
+      const docRow = db.prepare("SELECT * FROM documents WHERE id = ?").get(primaryDocId);
+      if (!docRow) {
+        return res.status(400).json({
+          error: "Attached land ownership document was not found.",
+          verification_status: "REJECTED",
+        });
+      }
+      if (docRow.user_id !== req.user.id) {
+        return res.status(403).json({
+          error: "Unauthorized document: You can only attach documents you uploaded.",
+          verification_status: "REJECTED",
+        });
+      }
+
+      // Rule 2: Run Strict Document Verification
+      const verificationReport = verifyPropertyAgainstDocument(
+        {
+          title,
+          owner_name,
+          survey_number,
+          subdivision_number,
+          patta_number,
+          location,
+          address,
+          city,
+          state,
+          area,
+          area_unit,
+          price,
+        },
+        docRow,
+        req.user
+      );
+
       const resolvedStatus = VALID_LISTING_STATUSES.includes(listing_status)
         ? listing_status
         : "Draft";
+
+      // Rule 3: Strict Posting Rules
+      // If user requested to Publish, verification MUST be VERIFIED!
+      if (resolvedStatus === "Published") {
+        if (verificationReport.overall_status !== "VERIFIED") {
+          return res.status(422).json({
+            error: "Property posting blocked: Land document verification did not pass. " + verificationReport.message,
+            verification_status: verificationReport.overall_status,
+            report: verificationReport,
+            discrepancies: verificationReport.discrepancies,
+          });
+        }
+      }
+
+      const isVerified = verificationReport.overall_status === "VERIFIED" ? 1 : 0;
+      const finalSurveyNumber = String(survey_number || verificationReport.extracted_fields?.survey_number || "").trim();
+      const finalSubdivision = String(subdivision_number || verificationReport.extracted_fields?.subdivision_number || "").trim();
+      const finalPattaNumber = String(patta_number || verificationReport.extracted_fields?.patta_number || "").trim();
+      const finalOwnerName = String(owner_name || verificationReport.extracted_fields?.owner_name || req.user.name).trim();
 
       const defaultImg =
         "https://images.unsplash.com/photo-1505843795480-5cfb3c03f6ff?auto=format&fit=crop&w=1200&q=85";
       const tagArray = Array.isArray(tags) ? tags : ["Newly Listed", "Direct Owner"];
       const imageArray = Array.isArray(images) ? images : [];
-      const documentArray = Array.isArray(documents) ? documents : [];
 
       const stmt = db.prepare(`
         INSERT INTO properties (
@@ -527,9 +661,11 @@ router.post(
           verified, tags, description, description_long,
           facing, road_access, bedrooms, bathrooms,
           latitude, longitude,
-          status, listing_status, sample_label, documents_json
+          status, listing_status, sample_label, documents_json,
+          survey_number, subdivision_number, patta_number, owner_name,
+          document_id, verification_status, verification_report_json, verified_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const result = stmt.run(
@@ -547,7 +683,7 @@ router.post(
         90,
         image || defaultImg,
         JSON.stringify(imageArray),
-        documentArray.length > 0 ? 1 : 0,
+        isVerified,
         JSON.stringify(tagArray),
         description || "",
         String(description_long).trim(),
@@ -561,19 +697,30 @@ router.post(
         resolvedStatus,
         "",
         JSON.stringify(documentArray),
+        finalSurveyNumber,
+        finalSubdivision,
+        finalPattaNumber,
+        finalOwnerName,
+        docRow.id,
+        verificationReport.overall_status,
+        JSON.stringify(verificationReport),
+        isVerified ? new Date().toISOString() : null,
       );
 
       const created = db
         .prepare("SELECT * FROM properties WHERE id = ?")
         .get(result.lastInsertRowid);
 
+      logHistory(req.user.id, "post_property", `Created property #${result.lastInsertRowid} (status: ${resolvedStatus}, verification: ${verificationReport.overall_status})`, docRow.id);
+
       return res.status(201).json({
         success: true,
         message:
           resolvedStatus === "Published"
-            ? "Property listing published successfully."
-            : `Property saved as ${resolvedStatus}.`,
+            ? "Property listing verified and published successfully."
+            : `Property saved as ${resolvedStatus}. Verification status: ${verificationReport.overall_status}.`,
         property: formatProperty(created),
+        verification_report: verificationReport,
       });
     } catch (err) {
       console.error("Error creating property:", err);
@@ -604,6 +751,7 @@ router.put(
         description_long, facing, road_access,
         bedrooms, bathrooms, latitude, longitude,
         status, listing_status, documents,
+        survey_number, subdivision_number, patta_number, owner_name, document_id,
       } = req.body || {};
 
       const resolvedStatus =
@@ -615,6 +763,55 @@ router.put(
         ? (String(status).toUpperCase() === "SOLD" ? "SOLD" : String(status).toUpperCase() === "PENDING" ? "PENDING" : String(status).toUpperCase() === "DRAFT" ? "DRAFT" : "AVAILABLE")
         : prop.status;
 
+      const documentArray = Array.isArray(documents)
+        ? documents
+        : (prop.documents_json ? safeParse(prop.documents_json, []) : []);
+      const primaryDocId = document_id || prop.document_id || (documentArray[0] && (documentArray[0].id || documentArray[0].local_id || documentArray[0].document_id));
+
+      let verificationReport = safeParse(prop.verification_report_json, null);
+      let isVerified = prop.verified ? 1 : 0;
+      let verificationStatus = prop.verification_status || "PENDING";
+
+      if (primaryDocId) {
+        const docRow = db.prepare("SELECT * FROM documents WHERE id = ?").get(primaryDocId);
+        if (docRow && docRow.user_id === req.user.id) {
+          verificationReport = verifyPropertyAgainstDocument(
+            {
+              id: propertyId,
+              title: title ?? prop.title,
+              owner_name: owner_name ?? prop.owner_name,
+              survey_number: survey_number ?? prop.survey_number,
+              subdivision_number: subdivision_number ?? prop.subdivision_number,
+              patta_number: patta_number ?? prop.patta_number,
+              location: location ?? prop.location,
+              address: address ?? prop.address ?? prop.location,
+              city: city ?? prop.city,
+              state: state ?? prop.state,
+              area: area ?? prop.area,
+              area_unit: area_unit ?? prop.area_unit,
+              price: price ?? prop.price,
+            },
+            docRow,
+            req.user,
+            { existingPropertyId: propertyId }
+          );
+          verificationStatus = verificationReport.overall_status;
+          isVerified = verificationStatus === "VERIFIED" ? 1 : 0;
+        }
+      }
+
+      // Strict Rule: Block publishing if verification not passed
+      if (resolvedStatus === "Published") {
+        if (verificationStatus !== "VERIFIED") {
+          return res.status(422).json({
+            error: "Property update blocked: Land document verification did not pass. " + (verificationReport ? verificationReport.message : "Please upload a valid document."),
+            verification_status: verificationStatus,
+            report: verificationReport,
+            discrepancies: verificationReport?.discrepancies || [],
+          });
+        }
+      }
+
       db.prepare(`
         UPDATE properties SET
           title = ?, location = ?, address = ?, city = ?, state = ?,
@@ -623,7 +820,10 @@ router.put(
           tags = ?, description = ?, description_long = ?,
           facing = ?, road_access = ?, bedrooms = ?, bathrooms = ?,
           latitude = ?, longitude = ?, status = ?,
-          listing_status = ?, documents_json = ?, updated_at = CURRENT_TIMESTAMP
+          listing_status = ?, documents_json = ?,
+          survey_number = ?, subdivision_number = ?, patta_number = ?, owner_name = ?,
+          document_id = ?, verification_status = ?, verification_report_json = ?,
+          verified = ?, verified_at = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(
         title ?? prop.title,
@@ -650,14 +850,24 @@ router.put(
         normPropStatus,
         resolvedStatus,
         documents ? JSON.stringify(documents) : (prop.documents_json || "[]"),
+        survey_number ?? prop.survey_number ?? "",
+        subdivision_number ?? prop.subdivision_number ?? "",
+        patta_number ?? prop.patta_number ?? "",
+        owner_name ?? prop.owner_name ?? "",
+        primaryDocId || prop.document_id,
+        verificationStatus,
+        verificationReport ? JSON.stringify(verificationReport) : (prop.verification_report_json || "{}"),
+        isVerified,
+        isVerified ? (prop.verified_at || new Date().toISOString()) : null,
         propertyId,
       );
 
       const updated = db.prepare("SELECT * FROM properties WHERE id = ?").get(propertyId);
       return res.json({
         success: true,
-        message: "Property updated.",
+        message: "Property updated successfully.",
         property: formatProperty(updated),
+        verification_report: verificationReport,
       });
     } catch (err) {
       console.error("Error updating property:", err);
@@ -717,6 +927,12 @@ router.patch(
       }
 
       if (listing_status && VALID_LISTING_STATUSES.includes(listing_status)) {
+        if (listing_status === "Published" && !prop.verified && prop.verification_status !== "VERIFIED") {
+          return res.status(422).json({
+            error: "Property cannot be published: Mandatory land document verification has not passed. Please upload and verify your land document.",
+            verification_status: prop.verification_status || "NEEDS_CORRECTION",
+          });
+        }
         updatedListingStatus = listing_status;
         db.prepare(
           "UPDATE properties SET listing_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
